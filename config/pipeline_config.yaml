@@ -1,0 +1,59 @@
+# ─── config/pipeline_config.yml───────────────────────────────────────────
+
+# ─── Configures for data_source.py ───────────────────────────────────────────
+# ─── Services ────────────────────────────────────────────────────────────────
+services:
+  ccdi_sample_diagnosis: "https://federation.ccdi.cancer.gov/api/v1/sample-diagnosis"
+  ccdi_subject_diagnosis: "https://federation.ccdi.cancer.gov/api/v1/subject-diagnosis"
+  cbioportal_api: "https://www.cbioportal.org/api"
+  cbioportal_swagger: "https://www.cbioportal.org/api/v2/api-docs"
+
+# ─── CCDI source (None for all) ───────────────────────────────────────────────
+target_source: null    # or "PCDC", "Treehouse", "StJude", "KidsFirst", "ccdi-ecDNA" or keep None for all sources
+
+# ─── Harvest & overlap flags ──────────────────────────────────────────────────
+per_page: 100
+verbose: True
+consider_overlap: false
+
+# ─── HTTP settings ───────────────────────────────────────────────────────────
+timeout: 60
+retry_status: [429, 500, 502, 503, 504]
+
+# ─── Cancer‐type definitions ─────────────────────────────────────────────────
+default_type_terms:
+  Wilms Tumor:
+    - wilms
+    - nephroblastoma
+    - 8960/3
+  Glioma:
+    - glioma
+    - high-grade glioma
+    - low-grade glioma
+
+custom_type_terms: {}
+  # Neuroblastoma:
+  #   - neuroblastoma
+  #   - nbl
+
+# ─── Configures for extractor.py ───────────────────────────────────────────
+# ─── Cancer type interest ────────────────────────────────────────────────
+cancer_type_interest:
+  - Wilms Tumor
+# - Glioma
+
+# ─── Study ID ─────────────────────────────────────────────────────────────
+studyId:
+  Wilms Tumor: wt_target_2018_pub
+# Glioma: gbm_tcga_pub2013
+
+# ─── Expression profiles ───────────────────────────────────────────────────
+expression_profiles:
+  Wilms Tumor:
+    - mrna
+    - microrna
+    - methylation
+
+  Glioma:
+    - mrna
+    - linear_cna
