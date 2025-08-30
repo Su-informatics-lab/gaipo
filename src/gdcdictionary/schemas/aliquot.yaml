@@ -1,0 +1,149 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "aliquot"
+title: Aliquot
+type: object
+namespace: https://gdc.cancer.gov
+category: biospecimen
+project: '*'
+program: '*'
+description: >-
+  Pertaining to a portion of the whole; any one of two or more samples of something,
+  of the same volume or weight.
+additionalProperties: false
+submittable: true
+downloadable: false
+previous_version_downloadable: false
+validators: null
+
+systemProperties:
+  - id
+  - project_id
+  - created_datetime
+  - updated_datetime
+  - state
+
+links:
+  - exclusive: true
+    required: true
+    subgroup:
+      - name: analytes
+        backref: aliquots
+        label: derived_from
+        target_type: analyte
+        multiplicity: many_to_one
+        required: false
+      - name: samples
+        backref: aliquots
+        label: derived_from
+        target_type: sample
+        multiplicity: many_to_many
+        required: false
+  - name: centers
+    backref: aliquots
+    label: shipped_to
+    target_type: center
+    multiplicity: many_to_one
+    required: false
+
+required:
+  - submitter_id
+
+uniqueKeys:
+  - [id]
+  - [project_id, submitter_id]
+
+properties:
+
+  $ref:
+    - "_definitions.yaml#/ubiquitous_properties"
+
+  aliquot_quantity:
+    $ref:
+      - "_terms.yaml#/aliquot_quantity/common"
+    type: number
+    minimum: 0
+
+  aliquot_volume:
+    $ref:
+      - "_terms.yaml#/aliquot_volume/common"
+    type: number
+    minimum: 0
+
+  amount:
+    $ref:
+      - "_terms.yaml#/amount/common"
+    type: number
+    minimum: 0
+
+  analyte_type:
+    $ref:
+      - "analyte.yaml#/properties/analyte_type"
+
+  concentration:
+    $ref:
+      - "_terms.yaml#/concentration/common"
+    type: number
+    minimum: 0
+
+  no_matched_normal_low_pass_wgs:
+    $ref:
+      - "_terms.yaml#/no_matched_normal_low_pass_wgs/common"
+    type: boolean
+    default: false
+
+  no_matched_normal_targeted_sequencing:
+    $ref:
+      - "_terms.yaml#/no_matched_normal_targeted_sequencing/common"
+    type: boolean
+    default: false
+
+  no_matched_normal_wgs:
+    $ref:
+      - "_terms.yaml#/no_matched_normal_wgs/common"
+    type: boolean
+    default: false
+
+  no_matched_normal_wxs:
+    $ref:
+      - "_terms.yaml#/no_matched_normal_wxs/common"
+    type: boolean
+    default: false
+
+  source_center:
+    $ref:
+      - "_terms.yaml#/source_center/common"
+    type: string
+
+  selected_normal_wxs:
+    $ref:
+      - "_terms.yaml#/selected_normal_wxs/common"
+    type: boolean
+    default: false
+
+  selected_normal_wgs:
+    $ref:
+      - "_terms.yaml#/selected_normal_wgs/common"
+    type: boolean
+    default: false
+
+  selected_normal_targeted_sequencing:
+    $ref:
+      - "_terms.yaml#/selected_normal_targeted_sequencing/common"
+    type: boolean
+    default: false
+
+  selected_normal_low_pass_wgs:
+    $ref:
+      - "_terms.yaml#/selected_normal_low_pass_wgs/common"
+    type: boolean
+    default: false
+
+  analytes:
+    $ref: "_definitions.yaml#/to_one"
+
+  samples:
+    $ref: "_definitions.yaml#/to_many"
+
+  centers:
+    $ref: "_definitions.yaml#/to_one"

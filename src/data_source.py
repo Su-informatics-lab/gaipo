@@ -1,29 +1,79 @@
-# ─── Function instructions ────────────────────────────────────────────────────────
-'''
-Description:
-	1.	Define default cancer types with their search-term lists.
-	2.	Optionally supply your own custom cancer types (custom_type_terms).
-	3.	Pick a subset of these types to focus on via cancer_type_interest.
-	4.	Compile word-boundary regexes for each active type to reduce false positives.
-	5.	Harvest by paging through /subject-diagnosis for each unique search term.
-	6.	Merge all diagnosis values per subject across terms.
-	7.	Classify subjects into your chosen cancer types using the regexes.
-	8.	Export single-type and (optionally) overlap cohorts as CSVs.
-'''
+# src/data_source.py
+"""
+data_source.py — Harvest CCDI Federation subjects & samples by cancer-type terms
+
+What it does
+------------
+1) Builds active cancer-type vocabularies from config:
+     - default_type_terms + custom_type_terms
+     - restricts to cancer_type_interest
+     - compiles word-boundary regex per active type
+2) Pages CCDI Federation endpoints to harvest:
+     - /subject-diagnosis  → subject_id + diagnoses (per source)
+     - /sample-diagnosis   → sample_id + subject_id + diagnoses (per source)
+3) Classifies entities to cancer types via compiled regexes.
+4) Writes per-type CSVs and an id map parquet for downstream steps.
+
+Key inputs (from config/pipeline_config.yaml)
+---------------------------------------------
+services:
+  ccdi_sample_diagnosis: https://federation.ccdi.cancer.gov/api/v1/sample-diagnosis
+  ccdi_subject_diagnosis: https://federation.ccdi.cancer.gov/api/v1/subject-diagnosis
+cancer_type_interest: ["Wilms Tumor", ...]
+default_type_terms: { "Wilms Tumor": ["wilms", "nephroblastoma", ...], ... }
+custom_type_terms: {}  # optional additions/overrides
+target_source: null | "PCDC" | "KidsFirst" | ...  # filter to a single federation source
+per_page: 100
+timeout: 60
+retry_status: [429, 500, 502, 503, 504]
+studyId:
+  "Wilms Tumor": "wt_target_2018_pub"    # used to annotate idmap.parquet
+
+Outputs (relative to repo root)
+-------------------------------
+data/fetch/ccdi_api_request/
+  subject_ids/<cancer_type>.csv   # columns: source,subject_id,diagnoses
+  sample_ids/<cancer_type>.csv    # columns: source,sample_id,subject_id,diagnoses
+data/gdm/indexes/
+  idmap.parquet                   # columns: source,sample_id,subject_id,diagnoses,study_id,
+                                  #          node_id_subject,node_id_sample
+
+Environment
+-----------
+CONFIG_PATH      : path to pipeline_config.yaml (default: config/pipeline_config.yaml)
+VERBOSE (yaml)   : verbose logs when True
+
+CLI / Pipeline
+--------------
+- Recommended: via main driver
+    python -m src.main --call data_fetch
+- Ad-hoc (module has a __main__ that calls data_fetch()):
+    python -m src.data_source
+
+Notes & tips
+------------
+- Classification is regex-based on the 'associated_diagnoses' values returned by the API.
+- Set `target_source` in config to restrict to one federation backend (e.g., "PCDC") if you want a clean cohort.
+- The helper writes/updates idmap.parquet idempotently and de-dups by sample_id.
+- Rate limiting: on 429/5xx, the client backs off with simple 2**i sleeps up to 5 tries.
+"""
+
+import os
 import requests
 import time
 import csv
 import itertools
 import re
 import sys
+import pandas as pd
 from pathlib import Path
 from collections import defaultdict
 import yaml
 
 
 # ─── User configures ────────────────────────────────────────────────────────
-
-cfg_path = Path(__file__).parent.parent / "config" / "pipeline_config.yaml"
+cfg_env = os.getenv("CONFIG_PATH")
+cfg_path = Path(cfg_env) if cfg_env else ROOT / "config" / "pipeline_config.yaml"
 with open(cfg_path) as f:
     cfg = yaml.safe_load(f)
 
@@ -33,7 +83,8 @@ BASE_SAMPLE = cfg["services"]["ccdi_sample_diagnosis"].rstrip("/")
 
 # HTTP settings
 SESSION = requests.Session()
-TIMEOUT = cfg.get("timeout", 60)
+SESSION.headers.update({"User-Agent": "gaipo/0.1 (+data_source.py)"})
+TIMEOUT = cfg.get("timeout", 120)
 RETRY_STATUS = set(cfg.get("retry_status", []))
 
 # Pipeline knobs
@@ -46,13 +97,21 @@ default_type_terms = cfg["default_type_terms"]
 custom_type_terms = cfg.get("custom_type_terms") or {}
 cancer_type_interest = cfg["cancer_type_interest"]
 TARGET_SOURCE = cfg.get("target_source")
+STUDY_IDS = cfg.get("studyId", {})  # e.g., {"Wilms Tumor": "wt_target_2018_pub"}
 
 # Output directories
-SUBJECT_IDS_DIR = Path(__file__).parent.parent / "data" / "ccdi_api_request" / "subject_ids"
-SAMPLE_IDS_DIR = Path(__file__).parent.parent / "data" / "ccdi_api_request" / "sample_ids"
-SUBJECT_IDS_DIR.mkdir(parents=True, exist_ok=True)
-SAMPLE_IDS_DIR.mkdir(parents=True, exist_ok=True)
+ROOT = Path(__file__).resolve().parents[1]
 
+SUBJECT_IDS_DIR = ROOT / "data" / "fetch" / "ccdi_api_request" / "subject_ids"
+SAMPLE_IDS_DIR  = ROOT / "data" / "fetch" / "ccdi_api_request" / "sample_ids"
+for p in (SUBJECT_IDS_DIR, SAMPLE_IDS_DIR):
+    p.mkdir(parents=True, exist_ok=True)
+
+# Parquet file output path
+GDM_ROOT  = ROOT / "data" / "gdm"
+GDM_INDEX = GDM_ROOT / "indexes"
+GDM_INDEX.mkdir(parents=True, exist_ok=True)
+GDM_ROOT.mkdir(parents=True, exist_ok=True)
 
 # ─── Build Active Types & Regexes ──────────────────────────────────────────────
 
@@ -115,7 +174,9 @@ def harvest_subjects_for_term(term):
             if TARGET_SOURCE and src!=TARGET_SOURCE: continue
 
             total = b["summary"]["counts"]["all"]
+            print(f"total: {total}")
             data = b["data"]
+            print("data num:" + str(len(data)))
             info = per_src.setdefault(src, {"total":total, "seen":0, "subjects":defaultdict(set)})
             info["seen"] += len(data)
             if info["seen"] < total:
@@ -262,10 +323,36 @@ def export_samples(rows, out_path):
             w.writerow([src, samp_id, subj_id, "|".join(sorted(diags))])
     print(f"Wrote {len(rows):,} rows to {out_path}")
 
-# ─── Main ──────────────────────────────────────────────────────────────────────
 
-def main():
+def write_idmap_parquet(sample_rows, cancer_type):
+    """
+    sample_rows: list[(source, sample_id, subject_id, diagnoses_set)]
+    Writes/updates data/gdm/indexes/idmap.parquet
+    """
+    if not sample_rows:
+        return
+    study_id = STUDY_IDS.get(cancer_type, None)
+    df = pd.DataFrame(sample_rows, columns=["source","sample_id","subject_id","diagnoses"])
+    df["study_id"] = study_id
+    df["node_id_subject"] = "patient:" + df["subject_id"].astype(str)
+    df["node_id_sample"]  = "sample:"  + df["sample_id"].astype(str)
+
+    outp = GDM_INDEX / "idmap.parquet"
+    # append or create; drop dups
+    if outp.exists():
+        old = pd.read_parquet(outp)
+        df = pd.concat([old, df], ignore_index=True)
+    df = df.drop_duplicates(subset=["sample_id"]).reset_index(drop=True)
+    df.to_parquet(outp, compression="zstd", index=False)
+    if VERBOSE:
+        print(f"[GDM] wrote/updated {outp} ({len(df):,} rows)")
+
+
+# ─── Example: data_fetch() for interested cancer types ──────────────────────────────────────────────────────────────────────
+
+def data_fetch():
     # Subjects
+    print(active_type_regexes)
     subj_res = [(t, harvest_subjects_for_term(t)) for t in search_terms]
     merged_subj = merge_subjects(subj_res)
     subj_matches = classify_entities(merged_subj, active_type_regexes)
@@ -282,6 +369,8 @@ def main():
         rows = filter_samples(samp_matches, [ctype])
         outf = SAMPLE_IDS_DIR / f"{ctype.replace(' ','_').lower()}.csv"
         export_samples(rows, outf)
+        # Also write GDM idmap for this cancer type
+        write_idmap_parquet(rows, ctype)
 
 if __name__ == "__main__":
-    main()
+    data_fetch()

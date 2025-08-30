@@ -1,59 +1,158 @@
-# ─── config/pipeline_config.yml───────────────────────────────────────────
+# config/pipeline_config.yaml
 
-# ─── Configures for data_source.py ───────────────────────────────────────────
-# ─── Services ────────────────────────────────────────────────────────────────
+# 0) optional auth (kept null by default)
+auth:
+  cbioportal_api_token: null        # or set via env CBIOPORTAL_API_TOKEN
+  ccdi_api_token: null              # not needed currently
+
+# 1) services (you already have these)
 services:
   ccdi_sample_diagnosis: "https://federation.ccdi.cancer.gov/api/v1/sample-diagnosis"
   ccdi_subject_diagnosis: "https://federation.ccdi.cancer.gov/api/v1/subject-diagnosis"
   cbioportal_api: "https://www.cbioportal.org/api"
   cbioportal_swagger: "https://www.cbioportal.org/api/v2/api-docs"
 
-# ─── CCDI source (None for all) ───────────────────────────────────────────────
-target_source: null    # or "PCDC", "Treehouse", "StJude", "KidsFirst", "ccdi-ecDNA" or keep None for all sources
+# 2) source filter (null = all)
+target_source: null   # "PCDC" | "Treehouse" | "StJude" | "KidsFirst" | "ccdi-ecDNA"
 
-# ─── Harvest & overlap flags ──────────────────────────────────────────────────
+# 3) paging / HTTP
 per_page: 100
-verbose: True
+verbose: true
 consider_overlap: false
-
-# ─── HTTP settings ───────────────────────────────────────────────────────────
 timeout: 60
 retry_status: [429, 500, 502, 503, 504]
+rate_limit:
+  sleep_seconds: 0.0   # bump to e.g. 0.2 if you hit 429s a lot
 
-# ─── Cancer‐type definitions ─────────────────────────────────────────────────
+# 4) cancer term dictionaries (unchanged)
 default_type_terms:
   Wilms Tumor:
-    - wilms
-    - nephroblastoma
-    - 8960/3
+    - "wilms"
+    - "nephroblastoma"
+    - "8960/3 : Nephroblastoma, NOS"
   Glioma:
-    - glioma
-    - high-grade glioma
-    - low-grade glioma
+    - "glioma"
+    - "high-grade glioma"
+    - "low-grade glioma"
 
 custom_type_terms: {}
   # Neuroblastoma:
-  #   - neuroblastoma
-  #   - nbl
+  #   - "neuroblastoma"
+  #   - "nbl"
 
-# ─── Configures for extractor.py ───────────────────────────────────────────
-# ─── Cancer type interest ────────────────────────────────────────────────
+# 5) which types you want right now
 cancer_type_interest:
-  - Wilms Tumor
-# - Glioma
+  - "Wilms Tumor"
+  # - "Glioma"
 
-# ─── Study ID ─────────────────────────────────────────────────────────────
+# 6) study IDs (used when writing idmap parquet)
 studyId:
-  Wilms Tumor: wt_target_2018_pub
-# Glioma: gbm_tcga_pub2013
+  "Wilms Tumor": "wt_target_2018_pub"
+  # "Glioma": "brain_cptac_2020"
 
-# ─── Expression profiles ───────────────────────────────────────────────────
+# What expression profiles to pull for each type
+# valid keys: mrna, mirna, methylation, linear_cna
 expression_profiles:
-  Wilms Tumor:
+  "Wilms Tumor":
     - mrna
-    - microrna
+    - mirna
     - methylation
-
-  Glioma:
+  "Glioma":
     - mrna
     - linear_cna
+
+# 7) the rest of your mapping (unchanged; keep as-is)
+gdc_mapping:
+  disease_type_map:
+    "Wilms Tumor": "Neoplasms, NOS"
+    "Wilms' Tumor": "Neoplasms, NOS"
+    "Glioma": "Gliomas"
+  primary_site_map:
+    "Wilms Tumor": "Kidney"
+    "Glioma": "Brain"
+  icdo_topography_map:
+    C649: "Kidney"
+    C710: "Brain"
+    C719: "Brain"
+  icdo_morph_to_site_map:
+    "8960": "Kidney"
+    "9380": "Brain"
+    "9400": "Brain"
+  oncotree_to_site:
+    WT: "Kidney"
+    LGG: "Brain"
+    HGG: "Brain"
+  sample_suffix_map:
+    "01": { specimen_type: "Solid Tissue",           tissue_type: "Tumor",  tumor_descriptor: "Primary",    sample_type: "Primary Tumor" }
+    "02": { specimen_type: "Solid Tissue",           tissue_type: "Tumor",  tumor_descriptor: "Recurrence", sample_type: "Recurrent Tumor" }
+    "03": { specimen_type: "Solid Tissue",           tissue_type: "Tumor",  tumor_descriptor: "Primary",    sample_type: "Primary Tumor" }
+    "06": { specimen_type: "Solid Tissue",           tissue_type: "Normal", tumor_descriptor: "Unknown",    sample_type: "Solid Tissue Normal" }
+    "10": { specimen_type: "Peripheral Whole Blood", tissue_type: "Normal", tumor_descriptor: "Unknown",    sample_type: "Blood Derived Normal" }
+  preservation_map:
+    ffpe: FFPE
+    formalin-fixed paraffin-embedded: FFPE
+    frozen: Frozen
+    fresh_frozen: Frozen
+    fresh frozen: Frozen
+    fresh: Fresh
+    snap frozen: Snap Frozen
+    cryopreserved: Cryopreserved
+    edta: EDTA
+    oct: OCT
+  preservation_default: Unknown
+
+# 8) Output root override (rarely needed; your module computes these)
+output_roots:
+  fetch_root: "data/fetch"
+  gdm_root:   "data/gdm"
+  schemas_dir: src/gdcdictionary/schemas
+
+# 9) Processor label settings (per cancer type)
+processor:
+  labels:
+    "Wilms Tumor":
+      source: samples
+      column: HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR
+      map: "FHWT=0,DAWT=1"
+      top_k: 500
+      test_size: 0.3
+      seed: 42
+    # "Glioma":
+    #   source: samples
+    #   column: CANCER_TYPE
+    #   map: "low-grade=0,high-grade=1"
+    #   top_k: 500
+    #   test_size: 0.2
+    #   seed: 42
+
+
+# 10) graph_constructor.py
+patient_similarity_graph:
+  edges_per_node: 5  
+  save_graphml: false 
+
+
+# 11) graph_ai_model.py
+model_mogonet:
+  mode: train             # or infer
+  checkpoints_dir: data/models
+  edges_per_node: 5
+  gcn_hidden: [400, 400, 200]
+  epochs: { pretrain: 50, train: 400}
+  lr: { enc_pretrain: 1.0e-4, enc: 1.0e-4, clf: 1.0e-4 }
+  device: cpu
+
+# 12) post_analysis.py
+post_analysis:
+  survival:
+    enabled: true
+    group_col: HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR   # column in clinical_patients.csv
+    time_col: OS_MONTHS
+    status_col: OS_STATUS
+    title: "Overall Survival by Histology"
+    out_dir: data/analysis/km
+
+  ablation:
+    enabled: true
+    edges_per_node: 5
+    out_dir: data/analysis/ablation

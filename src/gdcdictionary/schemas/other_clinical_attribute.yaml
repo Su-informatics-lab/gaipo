@@ -1,0 +1,1572 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "other_clinical_attribute"
+title: Other Clinical Attribute
+type: object
+namespace: https://gdc.cancer.gov
+category: clinical
+project: '*'
+program: '*'
+description: >-
+  Additional clinical attributes that are extraneous to other specific clinical entity
+  types within the GDC Data Dictionary.
+additionalProperties: false
+submittable: true
+downloadable: false
+previous_version_downloadable: false
+validators: null
+
+systemProperties:
+  - id
+  - project_id
+  - created_datetime
+  - updated_datetime
+  - state
+
+links:
+  - exclusive: false
+    required: true
+    subgroup:
+      - name: cases
+        backref: other_clinical_attributes
+        label: describes
+        target_type: case
+        multiplicity: many_to_one
+        required: false
+      - name: follow_ups
+        backref: other_clinical_attributes
+        label: describes
+        target_type: follow_up
+        multiplicity: many_to_one
+        required: false
+
+required:
+  - submitter_id
+
+uniqueKeys:
+  - [id]
+  - [project_id, submitter_id]
+
+deprecated:
+  - undescended_testis_corrected_age
+
+properties:
+
+  $ref:
+    - "_definitions.yaml#/ubiquitous_properties"
+
+  aids_risk_factors:
+    $ref:
+      - "_terms.yaml#/aids_risk_factors/common"
+    enum:
+      - Candidiasis
+      - Coccidioidomycosis
+      - Cryptococcosis
+      - Cryptosporidiosis, Chronic Intestinal
+      - Cytomegalovirus
+      - Encephalopathy
+      - Herpes Simplex Virus
+      - Histoplasmosis
+      - Isosporiasis
+      - Mycobacterium avium Complex
+      - Mycobacterium tuberculosis
+      - Mycobacterium, NOS
+      - Nocardiosis
+      - Pneumocystis Pneumonia
+      - Pneumonia, NOS
+      - Progressive Multifocal Leukoencephalopathy
+      - Salmonella Septicemia
+      - Toxoplasmosis
+      - Wasting Syndrome
+      - Unknown
+      - Not Reported
+    enumDef:
+      Pneumonia, NOS:
+        $ref:
+          - "_terms_enum.yaml#/pneumonia_nos/common"
+
+  bmi:
+    $ref:
+      - "_terms.yaml#/bmi/common"
+    type: number
+    minimum: 0
+
+  body_surface_area:
+    $ref:
+      - "_terms.yaml#/body_surface_area/common"
+    type: number
+    minimum: 0
+
+  cd4_count:
+    $ref:
+      - "_terms.yaml#/cd4_count/common"
+    type: number
+    minimum: 0
+
+  cdc_hiv_risk_factors:
+    $ref:
+      - "_terms.yaml#/cdc_hiv_risk_factors/common"
+    enum:
+      - Hemophiliac
+      - Heterosexual Contact
+      - Homosexual Contact
+      - Intravenous Drug User
+      - None
+      - Transfusion Recipient
+      - Unknown
+      - Not Reported
+    enumDef:
+      None:
+        $ref:
+          - "_terms_enum.yaml#/none/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  comorbidities:
+    $ref:
+      - "_terms.yaml#/comorbidities/common"
+    type: array
+    items:
+      enum:
+        - Abdominal Hernia
+        - Abnormal Glucose Level
+        - Acute Renal Failure
+        - Adenocarcinoma
+        - Adenomatous Polyposis Coli
+        - Adenomyosis
+        - Adenosis (Atypical Adenomatous Hyperplasia)
+        - Adrenocortical Insufficiency
+        - Alcoholic Liver Disease
+        - Allergies
+        - Allergy, Animal, NOS
+        - Allergy, Ant
+        - Allergy, Bee
+        - Allergy, Cat
+        - Allergy, Dairy or Lactose
+        - Allergy, Dog
+        - Allergy, Eggs
+        - Allergy, Food, NOS
+        - Allergy, Fruit
+        - Allergy, Meat
+        - Allergy, Mold or Dust
+        - Allergy, Nuts
+        - Allergy, Processed Foods
+        - Allergy, Seafood
+        - Allergy, Wasp
+        - Alpha-1 Antitrypsin
+        - Alpha-1 Antitrypsin Deficiency
+        - Altered Mental Status
+        - Androgen Excess
+        - Anemia
+        - Anxiety
+        - Aortic Valve Insufficiency
+        - Arrhythmia
+        - Arthritis
+        - Asthma
+        - Ataxia-Telangiectasia
+        - Atrial Fibrillation
+        - Autoimmune Atrophic Chronic Gastritis
+        - Autoimmune Lymphoproliferative Syndrome (ALPS)
+        - Avascular Necrosis
+        - Bacteroides fragilis
+        - BAP1 Tumor Predisposition Syndrome
+        - Barrett's Esophagus
+        - Basal Cell Carcinoma
+        - Beckwith-Wiedemann
+        - Behcet's Disease
+        - Benign Prostatic Hyperplasia
+        - Benign Thyroid Nodule
+        - Beta Thalassemia
+        - Biliary Disorder
+        - Bipolar Disorder
+        - Birt-Hogg-Dube Syndrome
+        - BK Virus
+        - Blood Clots
+        - Bone Fracture(s)
+        - Bronchitis
+        - Calcium Channel Blockers
+        - Cancer
+        - Cardiomyopathy
+        - Cataracts
+        - Celiac Disease
+        - Cerebrovascular Disease
+        - Chlamydia
+        - Chloroma
+        - Cholelithiasis
+        - Chronic Fatigue Syndrome
+        - Chronic Kidney Disease
+        - Chronic Pancreatitis
+        - Chronic Renal Failure
+        - Chronic Systemic Steroid Use
+        - Chronic Thyroiditis
+        - Cirrhosis, Unknown Etiology
+        - Clonal Hematopoiesis
+        - CNS Infection
+        - Colon Polyps
+        - Colonization, Bacterial
+        - Colonization, Fungal
+        - Common Variable Immune Deficiency (CVID)
+        - Common Variable Immunodeficiency
+        - Congestive Heart Failure (CHF)
+        - Connective Tissue Disorder
+        - COPD
+        - Coronary Artery Disease
+        - Cortisol Excess
+        - Cowden Syndrome
+        - Crohn's Disease
+        - Cryptococcal Meningitis
+        - Cryptogenic Organizing Pneumonia
+        - Cyst(s)
+        - Cytomegalovirus (CMV)
+        - Deep Vein Thrombosis / Thromboembolism
+        - Dementia
+        - Denys-Drash Syndrome
+        - Depression
+        - Dermatomyosis
+        - Diabetes
+        - Diabetes, NOS
+        - Diabetes, Type I
+        - Diabetes, Type II
+        - Diabetic Neuropathy
+        - Diet Controlled Diabetes
+        - Diverticulitis
+        - Diverticulosis
+        - Down Syndrome
+        - DVT/PE
+        - Dyslipidemia
+        - EBV Lymphoproliferation
+        - Eczema
+        - Encephalitis
+        - Endometriosis
+        - Endosalpingiosis
+        - Epilepsy
+        - Epithelial Dysplasia
+        - Epithelial Hyperplasia
+        - Epstein-Barr Virus
+        - Erectile Dysfunction
+        - Erythroderma
+        - Escherichia coli
+        - Estrogen Excess
+        - Evan's Syndrome
+        - Familial Adenomatous Polyposis
+        - Fanconi Anemia
+        - Fibromyalgia
+        - Fibrosis
+        - Follicular Adenoma
+        - Gastric Polyp(s)
+        - Gastritis
+        - Gastroesophageal Reflux Disease
+        - GERD
+        - Gilbert's Syndrome
+        - Glaucoma
+        - Glomerular Disease
+        - Glycogen Storage Disease
+        - Goiter
+        - Gonadal Dysfunction
+        - Gorlin Syndrome
+        - Gout
+        - Graft vs Host Disease
+        - Graves' Disease
+        - Hashimoto's Thyroiditis
+        - Hay Fever
+        - Headache
+        - Hearing Loss
+        - Heart Disease
+        - Helicobacter pylori Infection
+        - Helicobacter pylori-Associated Gastritis
+        - Hematologic Disorder, NOS
+        - Hemihypertrophy
+        - Hemochromatosis
+        - Hemophagocytic Lymphohistiocytosis (HLH)
+        - Hemorrhagic Cystitis
+        - Hepatic Encephalopathy
+        - Hepatitis
+        - Hepatitis A Infection
+        - Hepatitis B Infection
+        - Hepatitis C Infection
+        - Hepatitis, Chronic
+        - Hepatitis, NOS
+        - Hereditary Breast Cancer
+        - Hereditary Hemorrhagic Telangiectasia
+        - Hereditary Kidney Oncocytoma
+        - Hereditary Leiomyomatosis and Renal Cell Carcinoma
+        - Hereditary Non-Polyposis Colon Cancer
+        - Hereditary Ovarian Cancer
+        - Hereditary Papillary Renal Cell Carcinoma
+        - Hereditary Prostate Cancer
+        - Hereditary Renal Cell Carcinoma
+        - Herpes
+        - Herpes Zoster
+        - High Grade Dysplasia
+        - High Grade Liver Dysplastic Nodule
+        - High-grade Prostatic Intraepithelial Neoplasia (PIN)
+        - HIV/AIDS
+        - Hodgkin Lymphoma
+        - Human Herpesvirus-6 (HHV-6)
+        - Human Herpesvirus-8 (HHV-8)
+        - Human Papillomavirus Infection
+        - HUS/TTP
+        - Hypercalcemia
+        - Hypercholesterolemia
+        - Hyperglycemia
+        - Hyperlipidemia
+        - Hyperparathyroidism
+        - Hypertension
+        - Hyperthyroidism
+        - Hypospadias
+        - Hypotension
+        - Hypothyroidism
+        - Inflammation
+        - Inflammation, Hyperkeratosis
+        - Inflammatory Bowel Disease
+        - Inherited Genetic Syndrome, NOS
+        - Insulin Controlled Diabetes
+        - Interstitial Pneumonitis or ARDS
+        - Intestinal Metaplasia
+        - Intraductal Papillary Mucinous Neoplasm
+        - Iron Overload
+        - Ischemic Heart Disease
+        - ITP
+        - Joint Replacement
+        - Kidney Disease
+        - Li-Fraumeni Syndrome
+        - Liver Cirrhosis (Liver Disease)
+        - Liver Toxicity (Non-Infectious)
+        - Low Grade Dysplasia
+        - Low Grade Liver Dysplastic Nodule
+        - Lupus
+        - Lyme Disease
+        - Lymphamatoid Papulosis
+        - Lymphocytic Meningitis
+        - Lymphocytic Thyroiditis
+        - Lymphoid Hyperplasia
+        - Lynch Syndrome
+        - MAI
+        - Malaria
+        - Metabolic Syndrome
+        - Methicillin-Resistant Staphylococcus aureus (MRSA)
+        - Migraine
+        - Mineralcorticoids Excess
+        - Motor / Movement Change
+        - Myasthenia Gravis
+        - Mycobacterium avium Complex
+        - Myelodysplastic Syndrome
+        - Myocardial Infarction
+        - Neurocystericerosis
+        - Neuroendocrine Tumor
+        - Neuroma
+        - Neuropathy
+        - Nevus of Ota
+        - Nodular Hyperplasia
+        - Nodular Prostatic Hyperplasia
+        - Nonalcoholic Fatty Liver Disease
+        - Nonalcoholic Steatohepatitis
+        - Obesity
+        - Opioid Addiction
+        - Organ Transplant (Site)
+        - Osteoarthritis
+        - Osteoporosis or Osteopenia
+        - Other Cancer within 5 Years
+        - Other Nonmalignant Systemic Disease
+        - Other Pulmonary Complications
+        - Pain (Various)
+        - Pancreatitis
+        - Parasitic Disease of Biliary Tract
+        - Parkinson's Disease
+        - Peptic Ulcer (Ulcer)
+        - Peripheral Neuropathy
+        - Peripheral Vascular Disease
+        - Peutz-Jeghers Disease
+        - Pleural Effusion
+        - Pneumocystis Pneumonia
+        - Pneumonia, NOS
+        - Polycystic Ovarian Syndrome (PCOS)
+        - Polycythemia
+        - Pregnancy in Patient or Partner
+        - Primary Ciliary Dyskinesia
+        - Primary Sclerosing Cholangitis
+        - Primordial Dwarfism
+        - Psoriasis
+        - Pulmonary Embolism
+        - Pulmonary Fibrosis
+        - Pulmonary Hemorrhage
+        - Reactive Airway Disease
+        - Recurrent Pyogenic Cholangitis
+        - Renal Dialysis
+        - Renal Failure (Requiring Dialysis)
+        - Renal Insufficiency
+        - Rheumatoid Arthritis
+        - Rheumatologic Disease
+        - Rubella
+        - Rubinstein-Taybi Syndrome
+        - Sarcoidosis
+        - Scarlet Fever
+        - Seizure
+        - Sensory Changes
+        - Sepsis
+        - Serous Tubal Intraepithelial Carcinoma (STIC)
+        - Shingles
+        - Sialadenitis
+        - Sjogren's Syndrome
+        - Skin Rash
+        - Sleep Apnea
+        - Smoking
+        - Squamous Metaplasia
+        - Staph Osteomyelitis
+        - Staphylococcus aureus
+        - Steatosis
+        - Stroke
+        - Succinate Dehydrogenase-Deficient Renal Cell Carcinoma
+        - Syphilis
+        - Thyroid Disease, Non-Cancer
+        - Thyroid Nodular Hyperplasia
+        - Tobacco, NOS
+        - Tobacco, Smokeless
+        - Tobacco, Smoking
+        - Transient Ischemic Attack
+        - Treponema pallidum
+        - Tuberculosis
+        - Tuberous Sclerosis
+        - Tubulointerstitial Disease
+        - Tumor-Associated Lymphoid Proliferation
+        - Turcot Syndrome
+        - Turner's Syndrome
+        - Tyrosinemia
+        - Ulcerative Colitis
+        - Undescended Testis
+        - Urinary Tract Infection
+        - Varicella Zoster Virus
+        - Vascular Disease
+        - Ventricular Tachycardia
+        - Vision Changes
+        - Von Hippel-Lindau Syndrome
+        - Wagr Syndrome
+        - Other
+        - Unknown
+        - Not Reported
+    deprecated_enum:
+      - Alpha-1 Antitrypsin
+      - Diabetes
+      - Gastroesophageal Reflux Disease
+      - Hepatitis
+      - Kidney Disease
+      - Smoking
+    enumDef:
+      Cancer:
+        $ref:
+          - "_terms_enum.yaml#/cancer/common"
+      Epstein-Barr Virus:
+        $ref:
+          - "_terms_enum.yaml#/epsteinbarr_virus/common"
+      Pneumocystis Pneumonia:
+        $ref:
+          - "_terms_enum.yaml#/pneumonia_nos/common"
+      Other:
+        $ref:
+          - "_terms_enum.yaml#/other/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  comorbidity_method_of_diagnosis:
+    $ref:
+      - "_terms.yaml#/comorbidity_method_of_diagnosis/common"
+    enum:
+      - Histology
+      - Pathology
+      - Radiology
+      - Unknown
+      - Not Reported
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  days_to_comorbidity:
+    $ref:
+      - "_terms.yaml#/days_to_comorbidity/common"
+    type: integer
+    maximum: 32872
+    minimum: -32872
+
+  days_to_risk_factor:
+    $ref:
+      - "_terms.yaml#/days_to_risk_factor/common"
+    type: integer
+    maximum: 32872
+    minimum: -32872
+
+  diabetes_treatment_type:
+    $ref:
+      - "_terms.yaml#/diabetes_treatment_type/common"
+    enum:
+      - Alpha-Glucosidase Inhibitor
+      - Biguanide
+      - Diet
+      - Injected Insulin
+      - Insulin
+      - Linagliptin
+      - Oral Hypoglycemic
+      - Sulfonylurea
+      - Thiazolidinedione
+      - Other
+      - Unknown
+      - Not Reported
+    enumDef:
+      Other:
+        $ref:
+          - "_terms_enum.yaml#/other/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  dlco_ref_predictive_percent:
+    $ref:
+      - "_terms.yaml#/dlco_ref_predictive_percent/common"
+    type: number
+    minimum: 0
+
+  exercise_frequency_weekly:
+    description: >-
+      Text term that indicates the number of days that exercise occurred in the past
+      seven days.
+    enum:
+      - 5 or More Days
+      - 3 to 4 Days
+      - 1 to 2 Days
+      - None
+      - Unknown
+      - Not Reported
+    enumDef:
+      None:
+        $ref:
+          - "_terms_enum.yaml#/none/common"
+
+  eye_color:
+    $ref:
+      - "_terms.yaml#/eye_color/common"
+    enum:
+      - Amber
+      - Blue
+      - Brown
+      - Gray
+      - Green
+      - Hazel
+      - Red & Violet
+      - Other
+      - Unknown
+      - Not Reported
+    enumDef:
+      Other:
+        $ref:
+          - "_terms_enum.yaml#/other/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  fertility_history:
+    $ref:
+      - "_terms.yaml#/fertility_history/common"
+    enum:
+      - Conceived 1 or more children by assisted reproduction
+      - Conceived 1 or more children by natural conception
+      - Conceived 1 or more children by unspecified method
+      - Did not achieve pregnancy following 12 or more months of unprotected intercourse
+      - Did not attempt to reproduce
+      - Unknown
+      - Not Reported
+
+  fev1_fvc_post_bronch_percent:
+    $ref:
+      - "_terms.yaml#/fev1_fvc_post_bronch_percent/common"
+    type: number
+    minimum: 0
+
+  fev1_fvc_pre_bronch_percent:
+    $ref:
+      - "_terms.yaml#/fev1_fvc_pre_bronch_percent/common"
+    type: number
+    minimum: 0
+
+  fev1_ref_post_bronch_percent:
+    $ref:
+      - "_terms.yaml#/fev1_ref_post_bronch_percent/common"
+    type: number
+    minimum: 0
+
+  fev1_ref_pre_bronch_percent:
+    $ref:
+      - "_terms.yaml#/fev1_ref_pre_bronch_percent/common"
+    type: number
+    minimum: 0
+
+  haart_treatment_indicator:
+    $ref:
+      - "_terms.yaml#/haart_treatment_indicator/common"
+    enum:
+      - "Yes"
+      - "No"
+      - Unknown
+      - Not Reported
+    enumDef:
+      "Yes":
+        $ref:
+          - "_terms_enum.yaml#/yes/common"
+      "No":
+        $ref:
+          - "_terms_enum.yaml#/no/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  height:
+    $ref:
+      - "_terms.yaml#/height/common"
+    type: number
+    minimum: 0
+
+  hepatitis_sustained_virological_response:
+    $ref:
+      - "_terms.yaml#/hepatitis_sustained_virological_response/common"
+    enum:
+      - "Yes"
+      - "No"
+      - Unknown
+      - Not Reported
+    enumDef:
+      "Yes":
+        $ref:
+          - "_terms_enum.yaml#/yes/common"
+      "No":
+        $ref:
+          - "_terms_enum.yaml#/no/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  hiv_viral_load:
+    $ref:
+      - "_terms.yaml#/hiv_viral_load/common"
+    type: number
+    minimum: 0
+
+  hormonal_contraceptive_type:
+    $ref:
+      - "_terms.yaml#/hormonal_contraceptive_type/common"
+    enum:
+      - Progestin
+      - Progestin and Estrogen
+      - Unknown
+      - Not Reported
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  hormonal_contraceptive_use:
+    $ref:
+      - "_terms.yaml#/hormonal_contraceptive_use/common"
+    enum:
+      - Current User
+      - Former User
+      - Never Used
+      - Unknown
+      - Not Reported
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  hormonal_replacement_therapy_status:
+    $ref:
+      - "_terms.yaml#/hormonal_replacement_therapy_status/common"
+    enum:
+      - "Yes"
+      - "No"
+      - Unknown
+      - Not Reported
+
+  hormone_replacement_therapy_type:
+    $ref:
+      - "_terms.yaml#/hormone_replacement_therapy_type/common"
+    enum:
+      - Estrogen only
+      - Progesterone and Estrogen
+      - Progesterone only
+      - Unknown
+      - Not Reported
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  hysterectomy_margins_involved:
+    $ref:
+      - "_terms.yaml#/hysterectomy_margins_involved/common"
+    enum:
+      - Bladder
+      - Macroscopic Parametrium
+      - Microscopic Parametrium
+      - None
+      - Vagina
+      - Unknown
+      - Not Reported
+    enumDef:
+      None:
+        $ref:
+          - "_terms_enum.yaml#/none/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  hysterectomy_type:
+    $ref:
+      - "_terms.yaml#/hysterectomy_type/common"
+    enum:
+      - Hysterectomy, NOS
+      - Not Performed
+      - Radical Hysterectomy
+      - Simple Hysterectomy
+      - Unknown
+      - Not Reported
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  immunosuppressive_treatment_type:
+    $ref:
+      - "_terms.yaml#/immunosuppressive_treatment_type/common"
+    enum:
+      - Anti-TNF Therapy
+      - Azathioprine
+      - Cyclophosphamide
+      - Immunoglobulin
+      - Methotrexate
+      - None
+      - Prednisone
+      - Other
+      - Unknown
+      - Not Reported
+    enumDef:
+      None:
+        $ref:
+          - "_terms_enum.yaml#/none/common"
+      Other:
+        $ref:
+          - "_terms_enum.yaml#/other/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  menopause_status:
+    $ref:
+      - "_terms.yaml#/menopause_status/common"
+    enum:
+      - Perimenopausal
+      - Postmenopausal
+      - Premenopausal
+      - Unknown
+      - Not Reported
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  myasthenia_gravis_classification:
+    $ref:
+      - "_terms.yaml#/myasthenia_gravis_classification/common"
+    enum:
+      - Class I
+      - Class II
+      - Class III
+      - Class IV
+      - Class V
+      - Unknown
+      - Not Reported
+    enumDef:
+      Class I:
+        $ref:
+          - "_terms_enum.yaml#/i/other_clinical_attribute/myasthenia_gravis_classification"
+      Class II:
+        $ref:
+          - "_terms_enum.yaml#/ii/other_clinical_attribute/myasthenia_gravis_classification"
+      Class III:
+        $ref:
+          - "_terms_enum.yaml#/iii/other_clinical_attribute/myasthenia_gravis_classification"
+      Class IV:
+        $ref:
+          - "_terms_enum.yaml#/iv/other_clinical_attribute/myasthenia_gravis_classification"
+      Class V:
+        $ref:
+          - "_terms_enum.yaml#/v/other_clinical_attribute/myasthenia_gravis_classification"
+
+  nadir_cd4_count:
+    $ref:
+      - "_terms.yaml#/nadir_cd4_count/common"
+    type: number
+    minimum: 0
+
+  nononcologic_therapeutic_agents:
+    description: >-
+      Text identification of the individual agent(s) used as part of a treatment regimen
+      not related to an oncologic disease.
+    enum:
+      - Acetaminophen
+      - Aspirin
+      - Metformin
+      - Statin, NOS
+      - Unknown
+      - Not Reported
+    enumDef:
+      Acetaminophen:
+        $ref:
+          - "_terms_enum.yaml#/acetaminophen/common"
+      Aspirin:
+        $ref:
+          - "_terms_enum.yaml#/aspirin/common"
+      Metformin:
+        $ref:
+          - "_terms_enum.yaml#/metformin/common"
+
+  number_of_pregnancies:
+    $ref:
+      - "_terms.yaml#/number_of_pregnancies/common"
+    enum:
+      - "0"
+      - "1"
+      - "2"
+      - "3"
+      - 4+
+      - Unknown
+      - Not Reported
+
+  oxygen_use_indicator:
+    $ref:
+      - "_terms.yaml#/oxygen_use_indicator/common"
+    enum:
+      - "Yes"
+      - "No"
+      - Unknown
+      - Not Reported
+    enumDef:
+      "Yes":
+        $ref:
+          - "_terms_enum.yaml#/yes/common"
+      "No":
+        $ref:
+          - "_terms_enum.yaml#/no/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  oxygen_use_type:
+    $ref:
+      - "_terms.yaml#/oxygen_use_type/common"
+    enum:
+      - Continuous
+      - Intermittent
+      - Unknown
+      - Not Reported
+    enumDef:
+      Continuous:
+        $ref:
+          - "_terms_enum.yaml#/continuous/common"
+      Intermittent:
+        $ref:
+          - "_terms_enum.yaml#/intermittent/common"
+
+  pancreatitis_onset_year:
+    $ref:
+      - "_terms.yaml#/pancreatitis_onset_year/common"
+    type: integer
+    minimum: 1900
+
+  pregnancy_outcome:
+    $ref:
+      - "_terms.yaml#/pregnancy_outcome/common"
+    enum:
+      - Ectopic Pregnancy
+      - Full Term Birth, NOS
+      - Induced Abortion
+      - Live Birth
+      - Miscarriage
+      - Spontaneous Abortion
+      - Stillbirth
+      - Unknown
+      - Not Reported
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  pregnant_at_diagnosis:
+    $ref:
+      - "_terms.yaml#/pregnant_at_diagnosis/common"
+    enum:
+      - "Yes"
+      - "No"
+      - Unknown
+      - Not Reported
+    enumDef:
+      "Yes":
+        $ref:
+          - "_terms_enum.yaml#/yes/common"
+      "No":
+        $ref:
+          - "_terms_enum.yaml#/no/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  premature_at_birth:
+    $ref:
+      - "_terms.yaml#/premature_at_birth/common"
+    enum:
+      - "Yes"
+      - "No"
+      - Unknown
+      - Not Reported
+    enumDef:
+      "Yes":
+        $ref:
+          - "_terms_enum.yaml#/yes/common"
+      "No":
+        $ref:
+          - "_terms_enum.yaml#/no/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  reflux_treatment_type:
+    $ref:
+      - "_terms.yaml#/reflux_treatment_type/common"
+    enum:
+      - Antacids
+      - H2 Blockers
+      - Medically Treated
+      - No Treatment
+      - Proton Pump Inhibitors
+      - Surgically Treated
+      - Unknown
+      - Not Reported
+      - Not Applicable
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+      Not Applicable:
+        $ref:
+          - "_terms_enum.yaml#/not_applicable/common"
+
+  risk_factor_method_of_diagnosis:
+    $ref:
+      - "_terms.yaml#/risk_factor_method_of_diagnosis/common"
+    enum:
+      - Biochemical Assessment
+      - Both Clinical and Biochemical Assessments
+      - Clinical Assessment
+      - Unknown
+      - Not Reported
+    enumDef:
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  risk_factor_treatment:
+    $ref:
+      - "_terms.yaml#/risk_factor_treatment/common"
+    enum:
+      - "Yes"
+      - "No"
+      - Unknown
+      - Not Reported
+    enumDef:
+      "Yes":
+        $ref:
+          - "_terms_enum.yaml#/yes/common"
+      "No":
+        $ref:
+          - "_terms_enum.yaml#/no/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  risk_factors:
+    $ref:
+      - "_terms.yaml#/risk_factors/common"
+    type: array
+    items:
+      enum:
+        - Abdominal Hernia
+        - Abnormal Glucose Level
+        - Adenocarcinoma
+        - Adenomatous Polyposis Coli
+        - Adenomyosis
+        - Adenosis (Atypical Adenomatous Hyperplasia)
+        - Alcohol Consumption
+        - Alcoholic Liver Disease
+        - Allergies
+        - Allergy, Animal, NOS
+        - Allergy, Ant
+        - Allergy, Bee
+        - Allergy, Cat
+        - Allergy, Dairy or Lactose
+        - Allergy, Dog
+        - Allergy, Eggs
+        - Allergy, Food, NOS
+        - Allergy, Fruit
+        - Allergy, Meat
+        - Allergy, Mold or Dust
+        - Allergy, Nuts
+        - Allergy, Processed Foods
+        - Allergy, Seafood
+        - Allergy, Wasp
+        - Alpha-1 Antitrypsin Deficiency
+        - Altered Mental Status
+        - Androgen Excess
+        - Anemia
+        - Aortic Valve Insufficiency
+        - Arthritis
+        - Asthma
+        - Ataxia-Telangiectasia
+        - Atrial Fibrillation
+        - Autoimmune Atrophic Chronic Gastritis
+        - Autoimmune Lymphoproliferative Syndrome (ALPS)
+        - Bacteroides fragilis
+        - BAP1 Tumor Predisposition Syndrome
+        - Barrett's Esophagus
+        - Basal Cell Carcinoma
+        - Beckwith-Wiedemann
+        - Behcet's Disease
+        - Benign Prostatic Hyperplasia
+        - Benign Thyroid Nodule
+        - Beta Thalassemia
+        - Biliary Disorder
+        - Bipolar Disorder
+        - Birt-Hogg-Dube Syndrome
+        - BK Virus
+        - BRCA Family History
+        - Bronchitis
+        - Calcium Channel Blockers
+        - Cancer
+        - Cardiomyopathy
+        - Cataracts
+        - Celiac Disease
+        - Cerebrovascular Disease
+        - Chlamydia
+        - Chloroma
+        - Cholelithiasis
+        - Chronic Fatigue Syndrome
+        - Chronic Hepatitis
+        - Chronic Kidney Disease
+        - Chronic Pancreatitis
+        - Chronic Systemic Steroid Use
+        - Chronic Thyroiditis
+        - Cirrhosis
+        - Clonal Hematopoiesis
+        - CNS Infection
+        - Colon Polyps
+        - Colonization, Bacterial
+        - Colonization, Fungal
+        - Common Variable Immune Deficiency (CVID)
+        - Common Variable Immunodeficiency
+        - Congestive Heart Failure (CHF)
+        - Connective Tissue Disorder
+        - COPD
+        - Coronary Artery Disease
+        - Cortisol Excess
+        - Cowden Syndrome
+        - Crohn's Disease
+        - Cryptococcal Meningitis
+        - Cryptogenic Organizing Pneumonia
+        - Cyst(s)
+        - Cytomegalovirus (CMV)
+        - Denys-Drash Syndrome
+        - Dermatomyosis
+        - Diabetes, NOS
+        - Diabetes, Type I
+        - Diabetes, Type II
+        - Diet
+        - Diverticulitis
+        - Diverticulosis
+        - Down Syndrome
+        - Dyslipidemia
+        - EBV Lymphoproliferation
+        - Eczema
+        - Encephalitis
+        - Endometriosis
+        - Endosalpingiosis
+        - Epithelial Dysplasia
+        - Epithelial Hyperplasia
+        - Epstein-Barr Virus
+        - Erectile Dysfunction
+        - Erythroderma
+        - Escherichia coli
+        - Estrogen Excess
+        - Evan's Syndrome
+        - Familial Adenomatous Polyposis
+        - Fanconi Anemia
+        - Fibrosis
+        - Follicular Adenoma
+        - Gastric Polyp(s)
+        - Gastritis
+        - GERD
+        - Gilbert's Syndrome
+        - Glaucoma
+        - Glomerular Disease
+        - Glycogen Storage Disease
+        - Goiter
+        - Gorlin Syndrome
+        - Gout
+        - Graft vs Host Disease
+        - Graves' Disease
+        - Hashimoto's Thyroiditis
+        - Hay Fever
+        - Headache
+        - Hearing Loss
+        - Heart Disease
+        - Helicobacter pylori Infection
+        - Helicobacter pylori-Associated Gastritis
+        - Hematologic Disorder, NOS
+        - Hemihypertrophy
+        - Hemochromatosis
+        - Hemophagocytic Lymphohistiocytosis (HLH)
+        - Hepatic Encephalopathy
+        - Hepatitis A Infection
+        - Hepatitis B Infection
+        - Hepatitis C Infection
+        - Hepatitis, Chronic
+        - Hepatitis, NOS
+        - Hereditary Breast Cancer
+        - Hereditary Hemorrhagic Telangiectasia
+        - Hereditary Kidney Oncocytoma
+        - Hereditary Leiomyomatosis and Renal Cell Carcinoma
+        - Hereditary Non-Polyposis Colon Cancer
+        - Hereditary Ovarian Cancer
+        - Hereditary Papillary Renal Cell Carcinoma
+        - Hereditary Prostate Cancer
+        - Hereditary Renal Cell Carcinoma
+        - Herpes
+        - Herpes Simplex Virus
+        - Herpes Zoster
+        - High Grade Dysplasia
+        - High Grade Liver Dysplastic Nodule
+        - High-grade Prostatic Intraepithelial Neoplasia (PIN)
+        - HIV
+        - HIV/AIDS
+        - Hodgkin Lymphoma
+        - Human Herpesvirus-6 (HHV-6)
+        - Human Herpesvirus-8 (HHV-8)
+        - Human Papillomavirus Infection
+        - Hypercholesterolemia
+        - Hyperglycemia
+        - Hyperlipidemia
+        - Hyperparathyroidism
+        - Hypertension
+        - Hyperthyroidism
+        - Hypospadias
+        - Hypotension
+        - Hypothyroidism
+        - Inflammation
+        - Inflammation, Hyperkeratosis
+        - Inflammatory Bowel Disease
+        - Inherited Genetic Syndrome, NOS
+        - Interstitial Pneumonitis or ARDS
+        - Intestinal Metaplasia
+        - Intraductal Papillary Mucinous Neoplasm
+        - Iron Overload
+        - Ischemic Heart Disease
+        - ITP
+        - Li-Fraumeni Syndrome
+        - Liver Cirrhosis (Liver Disease)
+        - Low Grade Dysplasia
+        - Low Grade Liver Dysplastic Nodule
+        - Lupus
+        - Lyme Disease
+        - Lymphamatoid Papulosis
+        - Lymphocytic Meningitis
+        - Lymphocytic Thyroiditis
+        - Lymphoid Hyperplasia
+        - Lynch Syndrome
+        - Malaria
+        - Metabolic Syndrome
+        - Migraine
+        - Mineralcorticoids Excess
+        - Motor / Movement Change
+        - Myasthenia Gravis
+        - Mycobacterium avium Complex
+        - Myelodysplastic Syndrome
+        - Myocardial Infarction
+        - Neurocystericerosis
+        - Neuroendocrine Tumor
+        - Neuroma
+        - Neuropathy
+        - Nevus of Ota
+        - Nodular Hyperplasia
+        - Nodular Prostatic Hyperplasia
+        - Nonalcoholic Fatty Liver Disease
+        - Nonalcoholic Steatohepatitis
+        - None
+        - Obesity
+        - Opioid Addiction
+        - Oral Contraceptives
+        - Organ Transplant (Site)
+        - Osteoarthritis
+        - Pancreatitis
+        - Parasitic Disease of Biliary Tract
+        - Peptic Ulcer (Ulcer)
+        - Peripheral Vascular Disease
+        - Peutz-Jeghers Disease
+        - Pleural Effusion
+        - Pneumocystis Pneumonia
+        - Pneumonia, NOS
+        - Polycystic Ovarian Syndrome (PCOS)
+        - Polycythemia
+        - Pregnancy in Patient or Partner
+        - Primary Ciliary Dyskinesia
+        - Primary Sclerosing Cholangitis
+        - Primordial Dwarfism
+        - Psoriasis
+        - Pulmonary Embolism
+        - Pulmonary Fibrosis
+        - Reactive Airway Disease
+        - Recurrent Pyogenic Cholangitis
+        - Reflux Disease
+        - Renal Failure (Requiring Dialysis)
+        - Renal Insufficiency
+        - Rheumatoid Arthritis
+        - Rheumatologic Disease
+        - Rubella
+        - Rubinstein-Taybi Syndrome
+        - Sarcoidosis
+        - Scarlet Fever
+        - Seizure
+        - Sensory Changes
+        - Sepsis
+        - Serous Tubal Intraepithelial Carcinoma (STIC)
+        - Shingles
+        - Sialadenitis
+        - Sjogren's Syndrome
+        - Skin Rash
+        - Sleep Apnea
+        - Squamous Metaplasia
+        - Staph Osteomyelitis
+        - Staphylococcus aureus
+        - Steatosis
+        - Succinate Dehydrogenase-Deficient Renal Cell Carcinoma
+        - Syphilis
+        - Tattoo
+        - Thyroid Disease, Non-Cancer
+        - Thyroid Nodular Hyperplasia
+        - Tobacco, NOS
+        - Tobacco, Smokeless
+        - Tobacco, Smoking
+        - Treponema pallidum
+        - Tuberculosis
+        - Tuberous Sclerosis
+        - Tubulointerstitial Disease
+        - Tumor-associated Lymphoid Proliferation
+        - Turcot Syndrome
+        - Turner's Syndrome
+        - Tyrosinemia
+        - Ulcerative Colitis
+        - Undescended Testis
+        - Urinary Tract Infection
+        - Varicella Zoster Virus
+        - Vascular Disease
+        - Ventricular Tachycardia
+        - Vision Changes
+        - Von Hippel-Lindau Syndrome
+        - Wagr Syndrome
+        - Unknown
+        - Not Reported
+    deprecated_enum:
+      - Chronic Hepatitis
+      - Cirrhosis
+      - HIV
+      - Reflux Disease
+    enumDef:
+      Cancer:
+        $ref:
+          - "_terms_enum.yaml#/cancer/common"
+      Epstein-Barr Virus:
+        $ref:
+          - "_terms_enum.yaml#/epsteinbarr_virus/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  timepoint_category:
+    $ref:
+      - "_terms.yaml#/timepoint_category/common"
+    enum:
+      - Adjuvant Therapy
+      - Adolescence
+      - Adulthood
+      - After Chemotherapy
+      - After Study Enrollment
+      - After Study Registration
+      - Childhood
+      - End of Consolidation Therapy
+      - End of Treatment Course
+      - End of Treatment Course 1
+      - End of Treatment Course 2
+      - First Complete Response
+      - First Treatment
+      - Follow-up
+      - Initial Diagnosis
+      - Last Contact
+      - Post Adjuvant Therapy
+      - Post Hormone Therapy
+      - Post Initial Treatment
+      - Post Secondary Therapy
+      - Postoperative
+      - Preoperative
+      - Prior to Adjuvant Therapy
+      - Prior to Chemotherapy
+      - Prior to Diagnosis
+      - Prior to Procurement
+      - Prior to Study Enrollment
+      - Prior to Study Registration
+      - Prior to Treatment
+      - Progression
+      - Recurrence
+      - Recurrence/Progression
+      - Sample Procurement
+      - Within 2 Months After Completion of First-Course Treatment
+      - Within 3 Months of Surgery
+      - Other
+      - Unknown
+      - Not Reported
+    deprecated_enum:
+      - After Study Enrollment
+      - Prior to Study Enrollment
+    enumDef:
+      Other:
+        $ref:
+          - "_terms_enum.yaml#/other/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  treatment_frequency:
+    $ref:
+      - "_terms.yaml#/treatment_frequency/common"
+    enum:
+      - Every Hour
+      - Five Times Daily
+      - Four Times Daily
+      - Three Times Daily
+      - Twice Daily
+      - Once Daily
+      - Every Other Day
+      - Twice Weekly
+      - Once Weekly
+      - Once a Week for at Least a Year
+      - Occasionally
+      - Never
+      - Unknown
+      - Not Reported
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  undescended_testis_corrected:
+    $ref:
+      - "_terms.yaml#/undescended_testis_corrected/common"
+    enum:
+      - "Yes"
+      - "No"
+      - Unknown
+      - Not Reported
+    enumDef:
+      "Yes":
+        $ref:
+          - "_terms_enum.yaml#/yes/common"
+      "No":
+        $ref:
+          - "_terms_enum.yaml#/no/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  undescended_testis_corrected_age:
+    $ref:
+      - "_terms.yaml#/undescended_testis_corrected_age/common"
+    type: integer
+    maximum: 89
+    minimum: 0
+
+  undescended_testis_corrected_age_range:
+    $ref:
+      - "_terms.yaml#/undescended_testis_corrected_age/common"
+    enum:
+      - 2-11 months
+      - 1-2 years
+      - 3-9 years
+      - 10-14 years
+      - Unknown
+      - Not Reported
+
+  undescended_testis_corrected_laterality:
+    $ref:
+      - "_terms.yaml#/undescended_testis_corrected_laterality/common"
+    enum:
+      - Bilateral
+      - Left
+      - Right
+      - Unknown
+      - Not Reported
+    enumDef:
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  undescended_testis_corrected_method:
+    $ref:
+      - "_terms.yaml#/undescended_testis_corrected_method/common"
+    enum:
+      - Hormones
+      - Orchiopexy
+      - Spontaneous Descent
+      - Testis Removed
+      - Unknown
+      - Not Reported
+    enumDef:
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  undescended_testis_history:
+    $ref:
+      - "_terms.yaml#/undescended_testis_history/common"
+    enum:
+      - "Yes"
+      - "No"
+      - Unknown
+      - Not Reported
+    enumDef:
+      "Yes":
+        $ref:
+          - "_terms_enum.yaml#/yes/common"
+      "No":
+        $ref:
+          - "_terms_enum.yaml#/no/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  undescended_testis_history_laterality:
+    $ref:
+      - "_terms.yaml#/undescended_testis_history_laterality/common"
+    enum:
+      - Bilateral
+      - Left
+      - Right
+      - Unknown
+      - Not Reported
+    enumDef:
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  viral_hepatitis_serology_tests:
+    $ref:
+      - "_terms.yaml#/viral_hepatitis_serology_tests/common"
+    type: array
+    items:
+      enum:
+        - HBV Core Antibody
+        - HBV DNA
+        - HBV Genotype
+        - HBV Surface Antibody
+        - HCV Genotype
+        - Hepatitis B Surface Antigen
+        - Hepatitis C Antibody
+        - Hepatitis C Virus RNA
+        - Unknown
+        - Not Reported
+
+  weeks_gestation_at_birth:
+    $ref:
+      - "_terms.yaml#/weeks_gestation_at_birth/common"
+    type: number
+    minimum: 0
+
+  weight:
+    $ref:
+      - "_terms.yaml#/weight/common"
+    type: number
+    minimum: 0
+
+  cases:
+    $ref: "_definitions.yaml#/to_one"
+
+  follow_ups:
+    $ref: "_definitions.yaml#/to_one"

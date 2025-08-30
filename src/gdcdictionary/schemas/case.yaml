@@ -1,0 +1,272 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "case"
+title: Case
+type: object
+namespace: https://gdc.cancer.gov
+category: administrative
+project: '*'
+program: '*'
+description: >-
+  The collection of all data related to a specific subject in the context of a specific
+  project.
+additionalProperties: false
+submittable: true
+downloadable: false
+previous_version_downloadable: false
+validators: null
+
+systemProperties:
+  - id
+  - project_id
+  - created_datetime
+  - updated_datetime
+  - state
+
+links:
+  - name: projects
+    backref: cases
+    label: member_of
+    target_type: project
+    multiplicity: many_to_one
+    required: true
+  - name: tissue_source_sites
+    backref: cases
+    label: processed_at
+    target_type: tissue_source_site
+    multiplicity: many_to_one
+    required: false
+
+required:
+  - submitter_id
+  - disease_type
+  - primary_site
+
+uniqueKeys:
+  - [id]
+  - [project_id, submitter_id]
+
+properties:
+
+  $ref:
+    - "_definitions.yaml#/ubiquitous_properties"
+
+  consent_type:
+    $ref:
+      - "_terms.yaml#/consent_type/common"
+    enum:
+      - Consent by Death
+      - Consent Exemption
+      - Consent Waiver
+      - Informed Consent
+
+  days_to_consent:
+    $ref:
+      - "_terms.yaml#/days_to_consent/common"
+    type: integer
+    maximum: 32872
+    minimum: -32872
+
+  days_to_lost_to_followup:
+    $ref:
+      - "_terms.yaml#/days_to_lost_to_followup/common"
+    type: integer
+    maximum: 32872
+    minimum: -32872
+
+  disease_type:
+    $ref:
+      - "_terms.yaml#/disease_type/common"
+    enum:
+      - Acinar Cell Neoplasms
+      - Adenomas and Adenocarcinomas
+      - Adnexal and Skin Appendage Neoplasms
+      - Basal Cell Neoplasms
+      - Blood Vessel Tumors
+      - Chronic Myeloproliferative Disorders
+      - Complex Epithelial Neoplasms
+      - Complex Mixed and Stromal Neoplasms
+      - Cystic, Mucinous and Serous Neoplasms
+      - Ductal and Lobular Neoplasms
+      - Epithelial Neoplasms, NOS
+      - Fibroepithelial Neoplasms
+      - Fibromatous Neoplasms
+      - Germ Cell Neoplasms
+      - Giant Cell Tumors
+      - Gliomas
+      - Granular Cell Tumors and Alveolar Soft Part Sarcomas
+      - Hodgkin Lymphoma
+      - Immunoproliferative Diseases
+      - Leukemias, NOS
+      - Lipomatous Neoplasms
+      - Lymphatic Vessel Tumors
+      - Lymphoid Leukemias
+      - Malignant Lymphomas, NOS or Diffuse
+      - Mast Cell Tumors
+      - Mature B-Cell Lymphomas
+      - Mature T- and NK-Cell Lymphomas
+      - Meningiomas
+      - Mesonephromas
+      - Mesothelial Neoplasms
+      - Miscellaneous Bone Tumors
+      - Miscellaneous Tumors
+      - Mucoepidermoid Neoplasms
+      - Myelodysplastic Syndromes
+      - Myeloid Leukemias
+      - Myomatous Neoplasms
+      - Myxomatous Neoplasms
+      - Neoplasms of Histiocytes and Accessory Lymphoid Cells
+      - Neoplasms, NOS
+      - Nerve Sheath Tumors
+      - Neuroepitheliomatous Neoplasms
+      - Nevi and Melanomas
+      - Odontogenic Tumors
+      - Osseous and Chondromatous Neoplasms
+      - Other Hematologic Disorders
+      - Other Leukemias
+      - Paragangliomas and Glomus Tumors
+      - Plasma Cell Tumors
+      - Precursor Cell Lymphoblastic Lymphoma
+      - Soft Tissue Tumors and Sarcomas, NOS
+      - Specialized Gonadal Neoplasms
+      - Squamous Cell Neoplasms
+      - Synovial-like Neoplasms
+      - Thymic Epithelial Neoplasms
+      - Transitional Cell Papillomas and Carcinomas
+      - Trophoblastic neoplasms
+      - Unknown
+      - Not Reported
+      - Not Applicable
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+      Not Applicable:
+        $ref:
+          - "_terms_enum.yaml#/not_applicable/common"
+
+  index_date:
+    $ref:
+      - "_terms.yaml#/index_date/common"
+    enum:
+      - Diagnosis
+      - First Patient Visit
+      - First Treatment
+      - Initial Genomic Sequencing
+      - Recurrence
+      - Sample Procurement
+      - Study Enrollment
+
+  lost_to_followup:
+    $ref:
+      - "_terms.yaml#/lost_to_followup/common"
+    enum:
+      - "Yes"
+      - "No"
+      - Unknown
+    enumDef:
+      "Yes":
+        $ref:
+          - "_terms_enum.yaml#/yes/common"
+      "No":
+        $ref:
+          - "_terms_enum.yaml#/no/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+
+  primary_site:
+    $ref:
+      - "_terms.yaml#/primary_site/common"
+    enum:
+      - Accessory sinuses
+      - Adrenal gland
+      - Anus and anal canal
+      - Base of tongue
+      - Bladder
+      - Bones, joints and articular cartilage of limbs
+      - Bones, joints and articular cartilage of other and unspecified sites
+      - Brain
+      - Breast
+      - Bronchus and lung
+      - Cervix uteri
+      - Colon
+      - Connective, subcutaneous and other soft tissues
+      - Corpus uteri
+      - Esophagus
+      - Eye and adnexa
+      - Floor of mouth
+      - Gallbladder
+      - Gum
+      - Heart, mediastinum, and pleura
+      - Hematopoietic and reticuloendothelial systems
+      - Hypopharynx
+      - Kidney
+      - Larynx
+      - Lip
+      - Liver and intrahepatic bile ducts
+      - Lymph nodes
+      - Meninges
+      - Nasal cavity and middle ear
+      - Nasopharynx
+      - Oropharynx
+      - Other and ill-defined digestive organs
+      - Other and ill-defined sites
+      - Other and ill-defined sites in lip, oral cavity and pharynx
+      - Other and ill-defined sites within respiratory system and intrathoracic organs
+      - Other and unspecified female genital organs
+      - Other and unspecified major salivary glands
+      - Other and unspecified male genital organs
+      - Other and unspecified parts of biliary tract
+      - Other and unspecified parts of mouth
+      - Other and unspecified parts of tongue
+      - Other and unspecified urinary organs
+      - Other endocrine glands and related structures
+      - Ovary
+      - Palate
+      - Pancreas
+      - Parotid gland
+      - Penis
+      - Peripheral nerves and autonomic nervous system
+      - Placenta
+      - Prostate gland
+      - Pyriform sinus
+      - Rectosigmoid junction
+      - Rectum
+      - Renal pelvis
+      - Retroperitoneum and peritoneum
+      - Skin
+      - Small intestine
+      - Spinal cord, cranial nerves, and other parts of central nervous system
+      - Stomach
+      - Testis
+      - Thymus
+      - Thyroid gland
+      - Tonsil
+      - Trachea
+      - Ureter
+      - Uterus, NOS
+      - Vagina
+      - Vulva
+      - Unknown
+      - Not Reported
+      - Not Applicable
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+      Not Applicable:
+        $ref:
+          - "_terms_enum.yaml#/not_applicable/common"
+
+  projects:
+    $ref: "_definitions.yaml#/to_one_project"
+
+  tissue_source_sites:
+    $ref: "_definitions.yaml#/to_one"

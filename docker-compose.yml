@@ -1,0 +1,17 @@
+# DockerImage/docker-compose.yaml
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gaipo:latest
+    environment:
+      - CONFIG_PATH=/app/config/pipeline_config.yaml
+      # example: - CBIOPORTAL_API_TOKEN=${CBIOPORTAL_API_TOKEN}
+    volumes:
+      - ./config:/app/config:ro
+      - ./src:/app/src:rw
+      - ./data:/app/data:rw
+    working_dir: /app
+    # convenient default: list the help
+    command: ["python", "-m", "src.main", "--help"]

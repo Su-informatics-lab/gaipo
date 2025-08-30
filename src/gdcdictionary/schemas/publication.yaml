@@ -1,0 +1,71 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "publication"
+title: Publication
+type: object
+namespace: https://gdc.cancer.gov
+category: TBD
+project: '*'
+program: '*'
+description: >-
+  Publication for a legacy file (deprecated).
+additionalProperties: false
+submittable: false
+downloadable: true
+previous_version_downloadable: true
+validators: null
+
+systemProperties:
+  - id
+  - project_id
+  - created_datetime
+  - updated_datetime
+
+links:
+  - name: files
+    backref: publications
+    label: refers_to
+    target_type: file
+    multiplicity: many_to_many
+    required: true
+
+required:
+  - pmid
+  - doi
+  - files
+
+uniqueKeys:
+  - [id]
+  - [pmid]
+  - [doi]
+
+properties:
+
+  type:
+    type: string
+
+  id:
+    $ref:
+      - "_definitions.yaml#/uuid"
+
+  pmid:
+    type: string
+
+  doi:
+    type: string
+
+  project_id:
+    $ref:
+      - "_terms.yaml#/project_id/common"
+    type: string
+
+  created_datetime:
+    $ref:
+      - "_definitions.yaml#/datetime"
+
+  updated_datetime:
+    $ref:
+      - "_definitions.yaml#/datetime"
+
+  files:
+    $ref: "_definitions.yaml#/to_many"
