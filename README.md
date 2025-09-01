@@ -2,10 +2,10 @@
 * GAIPO: Graph Artificial Intelligence for Pediatric Oncology
 
 ## Run each step
-### Step 1: writes subject_ids / sample_ids
+### Step 1: Fetch subject_ids / sample_ids
 python -m src.main --call data_fetch
 
-### Step 2: Pull clinical + omics → TSV/Zarr/Parquet
+### Step 2: Pull clinical + omics -> TSV/Zarr/Parquet
 python -m src.main --call data_extract
 
 ### Step 3: Map to GDC-shaped Parquets (case, sample, demographic, idmap, file nodes)   
