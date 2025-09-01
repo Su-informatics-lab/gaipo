@@ -5,16 +5,16 @@
 ### Step 1: writes subject_ids / sample_ids
 python -m src.main --call data_fetch
 
-### Step 2: pulls clinical + omics → TSV/Zarr/Parquet
+### Step 2: Pull clinical + omics → TSV/Zarr/Parquet
 python -m src.main --call data_extract
 
-### Step 3: map to GDC-shaped Parquets (case, sample, demographic, idmap, file nodes)   
+### Step 3: Map to GDC-shaped Parquets (case, sample, demographic, idmap, file nodes)   
 python -m src.main --call data_model
 
-### Step 4: construct graph
+### Step 4: Construct graph
 python -m src.main --call graph_construct
 
-### Step 5: Use graph ai
+### Step 5: Use Graph AI
 python -m src.main --call graph_ai_model
 
 ### Step 6: Feature selection & survival analysis
