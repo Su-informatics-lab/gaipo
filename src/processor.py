@@ -47,7 +47,7 @@ pipeline_config.yaml:
         column: HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR
         map: "FHWT=0,DAWT=1"
         top_k: 500
-        test_size: 0.3
+        test_size: 0.2
         seed: 42
 
 Run:
@@ -66,7 +66,7 @@ Wilms Tumor:
     --label-source samples \
     --label-column HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR \
     --label-map "FHWT=0,DAWT=1" \
-    --top-k 500 --test-size 0.3 --seed 42
+    --top-k 500 --test-size 0.2 --seed 42
 
 Glioma (example single-modality):
   python src/processor.py \
@@ -76,10 +76,11 @@ Glioma (example single-modality):
     --label-source samples \
     --label-column CANCER_TYPE \
     --label-map "low-grade=0,high-grade=1" \
-    --top-k 500 --test-size 0.3 --seed 42
+    --top-k 500 --test-size 0.2 --seed 42
 """
 # src/processor.py
 import os
+import re
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import pandas as pd
@@ -96,12 +97,28 @@ import yaml
 def feature_filter_scaler(
     data: pd.DataFrame,
     labels: pd.Series,
-    var_threshold: float,
-    alpha: float,
-    topFeature: int,
+    var_threshold,               # float or List[float]
+    alpha,                       # float or List[float]
+    topFeature,                  # int   or List[int]
+    *,
     standard: bool = False,
     minimax: bool = True,
+    mod_idx: int = 0,            # NEW: which modality's hyperparams to use
 ) -> pd.DataFrame:
+    """
+    Apply VarianceThreshold + FDR(ANOVA F) + SelectKBest to 'data' using
+    hyperparameters that can be per-modality lists or scalars.
+
+    var_threshold: float or list of floats (len = #modalities)
+    alpha:         float or list of floats (len = #modalities)
+    topFeature:    int   or list of ints   (len = #modalities)
+    mod_idx:       index of current modality in the configured list
+    """
+    # Select per-modality hyperparameters (or use scalars)
+    vt  = float(_pick_for_mod(var_threshold, mod_idx))
+    a   = float(_pick_for_mod(alpha, mod_idx))
+    k   = int(_pick_for_mod(topFeature, mod_idx))
+
     tmp_filter = data.select_dtypes(include=["number"]).copy()
     # keep columns that are non-zero in >= 50% of rows
     tmp_filter = tmp_filter.loc[:, (tmp_filter != 0).sum(axis=0) >= (0.5 * tmp_filter.shape[0])]
@@ -110,9 +127,9 @@ def feature_filter_scaler(
 
     pipe = Pipeline(
         [
-            ("var_thresh", VarianceThreshold(threshold=var_threshold)),
-            ("fdr", SelectFdr(score_func=f_classif, alpha=alpha)),
-            ("kbest", SelectKBest(score_func=f_classif, k=min(topFeature, max(1, tmp_filter.shape[1]-1)))),
+            ("var_thresh", VarianceThreshold(threshold=vt)),
+            ("fdr", SelectFdr(score_func=f_classif, alpha=a)),
+            ("kbest", SelectKBest(score_func=f_classif, k=min(k, max(1, tmp_filter.shape[1]-1)))),
         ]
     )
     pipe.fit(tmp_filter, labels)
@@ -135,6 +152,63 @@ def feature_filter_scaler(
 # ==========================
 # Label & output helpers
 # ==========================
+
+def _pick_for_mod(x, mod_idx: int):
+    """Return scalar for this modality even if x is a list/tuple."""
+    if isinstance(x, (list, tuple)):
+        if not x:
+            raise ValueError("Empty list provided for a per-modality parameter.")
+        if mod_idx >= len(x):
+            raise IndexError(f"mod_idx={mod_idx} out of range for list of length {len(x)}")
+        return x[mod_idx]
+    return x
+
+def _collapse_mirna_rows(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """
+    Collapse miRNA rows that share the same base symbol (substring before '/').
+    Example:
+      LET-7A-1/3P, LET-7A-1/5P, LET-7A-1/7A*, LET-7A-1/7A-1L  -> base 'LET-7A-1'
+    Policy:
+      - If all rows for a base are identical across samples, keep the first.
+      - Otherwise, aggregate by median (row-wise).
+    Returns a dataframe with index = base miRNA symbol, columns = sampleIds
+    (i.e., still 'genes x samples' orientation — same as input), ready to transpose.
+    """
+    # Copy to avoid mutating caller
+    df = df_raw.copy()
+
+    # Drop non-expression columns if present
+    df = df.drop(columns=[c for c in ["entrezGeneId"] if c in df.columns], errors="ignore")
+
+    if "hugoGeneSymbol" not in df.columns:
+        raise ValueError("Expected column 'hugoGeneSymbol' in miRNA TSV")
+
+    # Build base symbol: keep everything before the first '/'
+    base = df["hugoGeneSymbol"].astype(str).str.replace(r"/.*$", "", regex=True)
+    df["_base"] = base
+
+    # Expression-only matrix
+    expr_cols = [c for c in df.columns if c not in ("hugoGeneSymbol", "_base")]
+    expr = df[expr_cols]
+
+    # Group by base and collapse
+    pieces = []
+    for b, g in df.groupby("_base"):
+        g_expr = g[expr_cols]
+        # If all rows in this group are identical across all samples, keep the first
+        if g_expr.drop_duplicates().shape[0] == 1:
+            rep = g_expr.iloc[0].to_frame().T
+            rep.index = [b]
+            pieces.append(rep)
+        else:
+            # Otherwise, take the median across the group
+            med = g_expr.median(axis=0, numeric_only=True).to_frame().T
+            med.index = [b]
+            pieces.append(med)
+
+    out = pd.concat(pieces, axis=0)
+    out.index.name = "hugoGeneSymbol_base"
+    return out
 
 def _parse_label_map_str(label_map_str: Optional[str]) -> Optional[Dict[str, int]]:
     if not label_map_str:
@@ -325,9 +399,11 @@ def load_and_prepare(
     label_source: str,
     label_column: str,
     top_k: int = 500,
-    test_size: float = 0.3,
+    test_size: float = 0.2,
     random_state: int = 42,
     label_map: Optional[str] = None,
+    var_threshold=0.01,
+    alpha=0.05,   
 ):
     """
     Load clinical and omics data, align to patientId, build binary labels, pre-select features, split train/test.
@@ -366,11 +442,23 @@ def load_and_prepare(
 
     # Per-modality matrices (aggregate to patientId if mapping is provided)
     omics_dict: Dict[str, pd.DataFrame] = {}
-    for mod in modalities:
+    for mi, mod in enumerate(modalities):
         f = _find_omics_file(cbio_dir, mod)
-        df = pd.read_csv(f, sep="\t")
-        df = df.drop(columns=[c for c in ["entrezGeneId"] if c in df.columns], errors="ignore")
-        df = df.set_index("hugoGeneSymbol").T  # samples × genes
+        df_raw = pd.read_csv(f, sep="\t")
+
+        if mod == "mirna":
+            # Collapse duplicate miRNA variants to one row per base symbol
+            # (genes x samples orientation)
+            genes_by_samples = _collapse_mirna_rows(df_raw)
+        else:
+            # Standard path (genes x samples): remove entrez, index by symbol
+            df_tmp = df_raw.drop(columns=[c for c in ["entrezGeneId"] if c in df_raw.columns], errors="ignore")
+            if "hugoGeneSymbol" not in df_tmp.columns:
+                raise ValueError(f"Expected 'hugoGeneSymbol' in {f}")
+            genes_by_samples = df_tmp.set_index("hugoGeneSymbol")
+
+        # Convert to (samples x genes)
+        df = genes_by_samples.T
         df.index = df.index.astype(str).str.strip()  # sampleId
         df.columns.name = None
 
@@ -412,6 +500,7 @@ def load_and_prepare(
             topFeature=top_k,
             standard=False,
             minimax=True,
+            mod_idx=mi,   
         )
         df_filtered = df_filtered.astype("float32")
         df_filtered.index.name = "patientId"
@@ -494,9 +583,11 @@ def data_process():
         label_source = lc.get("source", "samples")
         label_column = lc.get("column", "HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR")
         label_map = lc.get("map", None)
-        top_k = int(lc.get("top_k", 500))
-        test_size = float(lc.get("test_size", 0.3))
-        seed = int(lc.get("seed", 42))
+        var_threshold = lc.get("var_threshold", [0.005, 0.001, 0.01])  # float or [floats]
+        alpha         = lc.get("alpha", [0.05, 0.1, 0.05])          # float or [floats]
+        top_k         = lc.get("top_k", [500, 200, 500])           # int   or [ints]
+        test_size     = float(lc.get("test_size", 0.2))
+        seed          = int(lc.get("seed", 42))
 
         # CCDI mapping
         ccdi_csv = None
@@ -517,6 +608,8 @@ def data_process():
             test_size=test_size,
             random_state=seed,
             label_map=label_map,
+            var_threshold=var_threshold,
+            alpha=alpha,        
         )
 
         out_dir = Path("data/gdm/filtered") / ct_slug
@@ -558,7 +651,7 @@ if __name__ == "__main__":
     p.add_argument("--label-column", type=str, required=True)
     p.add_argument("--label-map", type=str, default=None, help="Binary mapping like 'FHWT=0,DAWT=1'")
     p.add_argument("--top-k", type=int, default=500)
-    p.add_argument("--test-size", type=float, default=0.3)
+    p.add_argument("--test-size", type=float, default=0.2)
     p.add_argument("--seed", type=int, default=42)
 
     args = p.parse_args()
