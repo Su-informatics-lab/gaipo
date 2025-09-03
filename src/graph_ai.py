@@ -526,9 +526,9 @@ def graph_ai_model():
           pretrain: 50
           train: 400
         lr:
-          enc_pretrain: 1.0e-4
-          enc: 1.0e-4
-          clf: 1.0e-4
+          enc_pretrain: 1.0e-3
+          enc: 5.0e-4
+          clf: 1.0e-3
         device: cpu                   # or cuda (if available)
         checkpoints_dir: data/models  # per-cancer subfolders
     """
@@ -537,15 +537,15 @@ def graph_ai_model():
     mode = str(model_cfg.get("mode", "train")).lower()
     ct_list = model_cfg.get("cancer_types") or cfg.get("cancer_type_interest", [])
     expr_profiles = cfg.get("expression_profiles", {})
-    edges_per_node = int(model_cfg.get("edges_per_node", 15))
+    edges_per_node = int(model_cfg.get("edges_per_node", 5))
     dim_he_list = tuple(model_cfg.get("gcn_hidden", [400, 400, 200]))
     epochs = model_cfg.get("epochs", {}) or {}
     num_epoch_pretrain = int(epochs.get("pretrain", 50))
     num_epoch = int(epochs.get("train", 400))
     lr_cfg = model_cfg.get("lr", {}) or {}
-    lr_e_pre = float(lr_cfg.get("enc_pretrain", 1e-4))
-    lr_e = float(lr_cfg.get("enc", 1e-4))
-    lr_c = float(lr_cfg.get("clf", 1e-4))
+    lr_e_pre = float(lr_cfg.get("enc_pretrain", 1e-3))
+    lr_e = float(lr_cfg.get("enc", 5e-4))
+    lr_c = float(lr_cfg.get("clf", 1e-3))
     device = _device_from_cfg(model_cfg)
     ckpt_root = Path(model_cfg.get("checkpoints_dir", "data/models"))
 

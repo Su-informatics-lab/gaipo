@@ -49,7 +49,7 @@ Notes
 Usage
 -----
 # Feature importance (after training with graph_ai.train_with_split):
-feat_imps = feature_importance_ablation(
+feat_imps = feature_importance_selection(
     X_tr_list, X_trte_list, trte_idx, model_dict, num_class=2, edges_per_node=5
 )
 for v, df_imp in enumerate(feat_imps):
@@ -105,14 +105,17 @@ def _cfg() -> dict:
     with open(cfg_path, "r") as f:
         return yaml.safe_load(f) or {}
 
+
 def _slug(s: str) -> str:
     return str(s).replace(" ", "_")
+
 
 def _mods_for(ct: str, cfg: dict) -> List[str]:
     prof = (cfg.get("expression_profiles") or {}).get(ct, []) or []
     # normalize synonyms
     syn = {"microrna": "mirna"}
     return [syn.get(m.lower(), m.lower()) for m in prof if m.lower() in {"mrna","microrna","mirna","methylation"}]
+
 
 def _coerce_int_labels(y) -> np.ndarray:
     """Return 1D int numpy array from any series/list of labels ('0'/'1', 0/1, etc.)."""
@@ -171,6 +174,7 @@ def plot_km_curves(clinical_df: pd.DataFrame, group_col: str, surv_time: str, su
     plt.close()
     print(f"[post] Saved KM plot -> {filename}")
 
+
 def _derive_os_binary(df: pd.DataFrame, status_col: str = "OS_STATUS") -> pd.Series:
     """
     cBio OS_STATUS often looks like: '1:DECEASED' or '0:LIVING'.
@@ -184,6 +188,7 @@ def _derive_os_binary(df: pd.DataFrame, status_col: str = "OS_STATUS") -> pd.Ser
     out = out.mask(s.str.contains("DECEASED"), 1)
     out = out.fillna(0)
     return out.astype(int)
+
 
 def run_km_survival():
     cfg = _cfg()
@@ -248,7 +253,7 @@ def run_km_survival():
         plot_km_curves(df, group_col, time_col, "__status_bin", str(out_png), f"{title} — {ct}")
 
 # =============================================================================
-# Feature-importance ablation (per-modality)
+# Feature-importance ablation (feature selection per-modality)
 # =============================================================================
 
 def _load_proc_for_ct(ct: str, mods: Sequence[str]):
@@ -287,9 +292,11 @@ def _load_proc_for_ct(ct: str, mods: Sequence[str]):
 
     return X_tr, X_te, y_tr, y_te
 
+
 def _expected_in_dims(model_dict, num_view: int):
     # Each encoder E{i} has gc1.weight: [in_dim, hidden]
     return [int(model_dict[f"E{i+1}"].gc1.weight.shape[0]) for i in range(num_view)]
+
 
 def _order_mods_like_meta(mods: Sequence[str], meta: Dict[str, any]) -> List[str]:
     """Return modalities in the exact order used at training (meta['views'])."""
@@ -304,6 +311,7 @@ def _order_mods_like_meta(mods: Sequence[str], meta: Dict[str, any]) -> List[str
         if missing:
             print(f"[post] Warning: these configured views were not in the checkpoint: {missing}")
     return ordered
+
 
 def _align_to_meta_features(
     X_tr: Dict[str, pd.DataFrame],
@@ -350,6 +358,7 @@ def _align_to_meta_features(
         )
     return X_tr_aligned, X_te_aligned
 
+
 def _validate_dims_against_model(model_dict, mods: Sequence[str], X_tr: Dict[str, pd.DataFrame]):
     exp = _expected_in_dims(model_dict, len(mods))
     got = [X_tr[m].shape[1] for m in mods]
@@ -359,27 +368,34 @@ def _validate_dims_against_model(model_dict, mods: Sequence[str], X_tr: Dict[str
         raise RuntimeError(
             "Feature dimension mismatch after alignment.\n"
             f"Expected per-view input dims: {exp}\n"
-            f"Got per-view feature dims:   {got}\n{details}\n"
+            f"Got per-view feature dims: {got}\n{details}\n"
             "Make sure you're using the same processed features as training, and that "
             "'feature_names' in the checkpoint matches these files."
         )
 
+
+def _reorder_to_trained_order(X_tr: Dict[str, pd.DataFrame],
+                              X_te: Dict[str, pd.DataFrame],
+                              mods_trained: Sequence[str]) -> Tuple[Dict[str,pd.DataFrame], Dict[str,pd.DataFrame]]:
+    """Return new dicts whose keys/iteration order match mods_trained exactly."""
+    X_tr_ord = {m: X_tr[m] for m in mods_trained}
+    X_te_ord = {m: X_te[m] for m in mods_trained}
+    return X_tr_ord, X_te_ord
+
+
 def _baseline_probs(
     model_dict,
     mods: Sequence[str],
-    X_tr: Dict[str, pd.DataFrame],
-    X_te: Dict[str, pd.DataFrame],
+    X_tr: Dict[str,pd.DataFrame],
+    X_te: Dict[str,pd.DataFrame],
     edges_per_node: int,
-    meta: Dict,    # pass the checkpoint meta
+    meta: Dict
 ):
-    # 1) make sure modality order matches training
-    mods = _order_mods_like_meta(mods, meta)
-
-    # 2) align columns to training feature names and validate dims
+    # align features to training feature set
     X_tr, X_te = _align_to_meta_features(X_tr, X_te, mods, meta)
+    # check dims against encoders
     _validate_dims_against_model(model_dict, mods, X_tr)
 
-    # 3) build TRTE block adjacencies and run inference
     params = MOGONETGraphParams(edges_per_node=edges_per_node)
     X_tr_list, X_trte_list, A_trte_list = [], [], []
     for m in mods:
@@ -394,44 +410,51 @@ def _baseline_probs(
     data_trte, adj_trte = tensors_from_numpy_lists(X_trte_list, A_trte_list, device="cpu")
     te_idx = list(range(len(X_tr[mods[0]]), len(X_tr[mods[0]]) + len(X_te[mods[0]])))
     prob = test_epoch(data_trte, adj_trte, te_idx, model_dict)
+    return prob, te_idx, X_tr, X_te
 
-    # helpful diagnostics
-    print("[post] Baseline dims per view (samples_tr, samples_te, nfeat):")
-    for i, m in enumerate(mods):
-        print(f"  - {m}: ({X_tr[m].shape[0]}, {X_te[m].shape[0]}, {X_tr[m].shape[1]})")
-    return prob, te_idx, X_tr, X_te, mods
 
-def run_feature_ablation():
+def run_feature_selection():
     cfg = _cfg()
-    ab = (cfg.get("post_analysis") or {}).get("ablation") or {}
+    ab = (cfg.get("post_analysis") or {}).get("feature_selection") or {}
     if not ab or not ab.get("enabled", False):
-        print("[post] Feature ablation disabled or not configured.")
+        print("[post] Feature selection disabled or not configured.")
         return
 
     edges_per_node = int(ab.get("edges_per_node", 5))
-    out_dir = Path(ab.get("out_dir", "data/analysis/ablation"))
+    out_dir = Path(ab.get("out_dir", "data/analysis/feature_selection"))
 
     cts = cfg.get("cancer_type_interest", [])
     for ct in cts:
         mods_cfg = _mods_for(ct, cfg)
         if not mods_cfg:
-            print(f"[post] {ct}: no modalities configured for ablation; skipping.")
+            print(f"[post] {ct}: no modalities configured for selection; skipping.")
             continue
 
         # load processed data + labels
         X_tr, X_te, y_tr, y_te = _load_proc_for_ct(ct, mods_cfg)
         y_true = _coerce_int_labels(y_te.values)
 
-        # load trained model bundle (+ meta)
+        # load trained model bundle + metadata
         ckpt_dir = Path(cfg.get("model", {}).get("checkpoints_dir", "data/models")) / _slug(ct)
         if not (ckpt_dir / "meta.json").exists():
-            print(f"[post] {ct}: checkpoints not found at {ckpt_dir}; skipping ablation.")
+            print(f"[post] {ct}: checkpoints not found at {ckpt_dir}; skipping selection.")
             continue
         model_dict, meta = load_model_bundle(ckpt_dir)
 
-        # baseline (also returns column-aligned matrices and the view order used)
-        base_prob, te_idx, X_tr, X_te, mods = _baseline_probs(
-            model_dict, mods_cfg, X_tr, X_te, edges_per_node, meta
+        # ---- USE TRAINED VIEW ORDER ----
+        mods_trained = meta.get("views")
+        if not mods_trained:
+            raise RuntimeError("Checkpoint meta.json missing 'views'. Retrain to save 'views' in meta.")
+        # reorder current frames to match the training order, then align columns to meta
+        X_tr, X_te = _reorder_to_trained_order(X_tr, X_te, mods_trained)
+
+        print("[post] Trained order:", mods_trained)
+        print("[post] Expected in-dims:", _expected_in_dims(model_dict, len(mods_trained)))
+        print("[post] Current in-dims:", [X_tr[m].shape[1] for m in mods_trained])
+
+        # baseline (also returns column-aligned frames)
+        base_prob, te_idx, X_tr, X_te = _baseline_probs(
+            model_dict, mods_trained, X_tr, X_te, edges_per_node, meta
         )
         base_pred = base_prob.argmax(1)
         base_f1  = f1_score(y_true, base_pred, average="macro")
@@ -442,45 +465,56 @@ def run_feature_ablation():
                 base_auc = roc_auc_score(y_true, base_prob[:, 1])
             except Exception:
                 pass
-        print(f"[post] {ct}: baseline — acc={base_acc:.4f}, f1={base_f1:.4f}{'' if base_auc is None else f', auc={base_auc:.4f}'}")
+        print(f"[post] {ct}: baseline acc={base_acc:.4f}, f1={base_f1:.4f}{'' if base_auc is None else f', auc={base_auc:.4f}'}")
 
-        # per-modality ablation (use the ALIGNED matrices)
+        # ----- PRECOMPUTE TRTE BLOCKS FOR ALL VIEWS IN TRAINED ORDER (baseline, non-ablated) -----
         params = MOGONETGraphParams(edges_per_node=edges_per_node)
-        for m in mods:
+        base_X_trte = {}
+        base_A_trte = {}
+        for m in mods_trained:
+            Xtr = X_tr[m].to_numpy(dtype=np.float32)
+            Xte = X_te[m].to_numpy(dtype=np.float32)
+            rad = compute_adaptive_radius_parameter_mogonet(Xtr, params)
+            base_X_trte[m] = np.vstack([Xtr, Xte])
+            base_A_trte[m] = build_trte_block_adjacency_mogonet(Xtr, Xte, radius=rad, params=params)
+
+        # ----- per-modality ablation (KEEP TRAINED ORDER) -----
+        for m in mods_trained:
+            # aligned matrices
             Xt = X_tr[m].to_numpy(dtype=np.float32)
             Xe = X_te[m].to_numpy(dtype=np.float32)
             V = Xt.shape[1]
             imps = np.zeros(V, dtype=float)
 
-            # precompute other views once
-            other_views = [mm for mm in mods if mm != m]
-            A_trte_others, X_trte_list_others = [], []
-            for om in other_views:
-                Xtr_o = X_tr[om].to_numpy(dtype=np.float32)
-                Xte_o = X_te[om].to_numpy(dtype=np.float32)
-                rad_o = compute_adaptive_radius_parameter_mogonet(Xtr_o, params)
-                A_trte_o = build_trte_block_adjacency_mogonet(Xtr_o, Xte_o, radius=rad_o, params=params)
-                A_trte_others.append(A_trte_o)
-                X_trte_list_others.append(np.vstack([Xtr_o, Xte_o]))
-
+            # for each feature j in THIS view m: ablate and only replace THIS slot while preserving order
             for j in range(V):
-                # ablate one feature in this view
+                # ablate
                 Xtr_v = Xt.copy(); Xte_v = Xe.copy()
                 Xtr_v[:, j] = 0.0; Xte_v[:, j] = 0.0
                 rad_v = compute_adaptive_radius_parameter_mogonet(Xtr_v, params)
                 A_trte_v = build_trte_block_adjacency_mogonet(Xtr_v, Xte_v, radius=rad_v, params=params)
+                X_trte_v = np.vstack([Xtr_v, Xte_v])
 
-                # pack views: others unchanged, current view ablated
-                X_trte_all = X_trte_list_others + [np.vstack([Xtr_v, Xte_v])]
-                A_trte_all = A_trte_others + [A_trte_v]
+                # assemble TRTE lists STRICTLY in trained order
+                X_trte_all = []
+                A_trte_all = []
+                for mm in mods_trained:
+                    if mm == m:
+                        X_trte_all.append(X_trte_v)
+                        A_trte_all.append(A_trte_v)
+                    else:
+                        X_trte_all.append(base_X_trte[mm])
+                        A_trte_all.append(base_A_trte[mm])
+
                 data_trte, adj_trte = tensors_from_numpy_lists(X_trte_all, A_trte_all, device="cpu")
                 prob = test_epoch(data_trte, adj_trte, te_idx, model_dict)
+
                 f1 = f1_score(y_true, prob.argmax(1), average="macro")
-                imps[j] = float(max(0.0, base_f1 - f1))
+                imps[j] = float((base_f1 - f1) * V)
 
             out_df = pd.DataFrame({"feature": X_tr[m].columns.astype(str), "delta_f1": imps})
             out_df.sort_values("delta_f1", ascending=False, inplace=True)
-            out_path = out_dir / _slug(ct) / f"{m}_ablation.csv"
+            out_path = out_dir / _slug(ct) / f"{m}_selection.csv"
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_df.to_csv(out_path, index=False)
             print(f"[post] {ct}/{m}: wrote importance CSV -> {out_path}")
@@ -500,9 +534,9 @@ def run_post_analysis():
     if (sec.get("survival") or {}).get("enabled", False):
         run_km_survival()
         did = True
-    if (sec.get("ablation") or {}).get("enabled", False):
-        run_feature_ablation()
+    if (sec.get("feature_selection") or {}).get("enabled", False):
+        run_feature_selection()
         did = True
 
     if not did:
-        print("[post] Nothing to do. Configure post_analysis.survival/ablation in your YAML.")
+        print("[post] Nothing to do. Configure post_analysis.survival/feature_selection in your YAML.")
