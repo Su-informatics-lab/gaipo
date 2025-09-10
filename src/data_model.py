@@ -1595,7 +1595,7 @@ class DataModel:
 # ---config-aware entrypoints for the pipeline ---
 
 def _cfg_load(path: Optional[str] = None) -> dict:
-    cfg_path = path or os.getenv("CONFIG_PATH", "config/gdc_mapping.yaml")
+    cfg_path = path or os.getenv("GDC_MAPPING_PATH", "config/gdc_mapping.yaml")
     try:
         with open(cfg_path, "r") as f:
             return yaml.safe_load(f) or {}
