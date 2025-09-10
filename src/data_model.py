@@ -24,7 +24,7 @@ Inputs
 - Feature stores / indexes (optional; from extractor):
     data/gdm/features/*.zarr
     data/gdm/indexes/*_{rows,cols}.parquet
-- Config: config/pipeline_config.yaml
+- Config: config/gdc_mapping.yaml
     project_id: WILMS_TUMOR_CBIO      # stamped on 'case' and 'file'
     schemas_dir: src/gdcdictionary/schemas
     gdm_root: data/gdm
@@ -72,7 +72,7 @@ Validation modes
 
 Environment
 -----------
-DM_CONFIG           : alternative config path (else CONFIG_PATH or default config/pipeline_config.yaml)
+DM_CONFIG           : alternative config path (else CONFIG_PATH or default config/gdc_mapping.yaml)
 CONFIG_PATH         : pipeline config (project_id, mappings, …)
 DM_GDC_STRICT       : 1/0 to force strict/lite (CLI --strict overrides)
 DM_DUCKDB_MODE      : memory | ro | rw   (default: memory)
@@ -138,14 +138,32 @@ import numpy as np
 # you can swap to "referencing" later if you prefer.
 import copy
 from jsonschema import Draft7Validator
-from jsonschema.validators import validator_for
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT7, DRAFT4
-
-
+from datetime import datetime, timezone
+import uuid
 # ==============================================================================
 # Utilities. & Helpers
 # ==============================================================================
+
+def _plain(vv):
+    # normalize pandas/NumPy types to plain Python
+    import numpy as np  # local import to avoid hard dep here
+    if vv is None:
+        return None
+    if vv is pd.NA:
+        return None
+    if isinstance(vv, float) and pd.isna(vv):
+        return None
+    if isinstance(vv, pd.Timestamp):
+        return vv.isoformat()
+    if isinstance(vv, np.generic):
+        return vv.item()
+    if isinstance(vv, dict):
+        return {k: _plain(x) for k, x in vv.items()}
+    if isinstance(vv, (list, tuple)):
+        return [_plain(x) for x in vv]
+    return vv
 
 def _md5_file(path: Path, chunk=1024*1024) -> str:
     h = hashlib.md5()
@@ -188,38 +206,9 @@ def _gdc_file_state() -> str:
     # conservative, recognized state for demo content
     return "validated"
 
-def _plain(v):
-    """Normalize pandas/NumPy types to plain Python for jsonschema."""
-    if v is None:
-        return None
-    if v is pd.NA:
-        return None
-    if isinstance(v, float) and np.isnan(v):
-        return None
-    if isinstance(v, pd.Timestamp):
-        return v.isoformat()
-    if isinstance(v, np.generic):
-        return v.item()
-    if isinstance(v, dict):
-        return {k: _plain(x) for k, x in v.items()}
-    if isinstance(v, (list, tuple)):
-        return [_plain(x) for x in v]
-    return v
-
-def _norm_sex(s: Optional[str]) -> Optional[str]:
-    if s is None:
-        return None
-    s = str(s).strip().lower()
-    # GDC expects: 'male','female','unknown','not reported'
-    if s.startswith("f"):
-        return "female"
-    if s.startswith("m"):
-        return "male"
-    if "unknown" in s:
-        return "unknown"
-    if "not reported" in s:
-        return "not reported"
-    return s
+def _stable_uuid5(name: str, ns: uuid.UUID = uuid.NAMESPACE_URL) -> str:
+    """Deterministic UUID from a stable string (e.g., submitter_id)."""
+    return str(uuid.uuid5(ns, name))
 
 def _subject_from_sample(sample_id: str) -> str:
     # TARGET-50-CAAAAC-01 -> TARGET-50-CAAAAC
@@ -327,15 +316,53 @@ def _derive_primary_site(patients_df: pd.DataFrame,
 
     return out.fillna("Unknown")
 
-def _derive_disease_type(patients_df: pd.DataFrame, cfg: dict) -> pd.Series:
+def _derive_disease_type(
+    patients_df: pd.DataFrame,
+    samples_df: pd.DataFrame,
+    cfg: dict
+) -> pd.Series:
+    """
+    Prefer CANCER_TYPE_DETAILED / CANCER_TYPE from samples_df (rolled up to subject),
+    else fall back to patients_df if present, else leave 'Unknown'.
+    Then map via gdc_mapping.disease_type_map (if provided).
+    """
     gm = (cfg or {}).get("gdc_mapping", {})
     dtype_map = gm.get("disease_type_map", {})
-    src = _pick_first_notnull(patients_df.get("CANCER_TYPE_DETAILED"),
-                              patients_df.get("CANCER_TYPE"))
-    if src is None:
-        return pd.Series(["Unknown"] * len(patients_df), index=patients_df.index, dtype=object)
-    s = src.astype(str)
-    return s.map(dtype_map).fillna(s)
+
+    # 1) Gather per-subject cancer type from samples if available
+    subj_from_sample = _samples_subject_ids(samples_df).rename("__subject_id")
+    s = pd.Series(index=pd.Index([], name="__subject_id", dtype="object"), dtype=object)
+
+    # choose detailed then basic
+    for col in ("CANCER_TYPE_DETAILED", "CANCER_TYPE"):
+        if col in samples_df.columns:
+            tmp = (
+                samples_df
+                .assign(__subject_id=_samples_subject_ids(samples_df))
+                .dropna(subset=[col])
+                .groupby("__subject_id")[col].agg("first")
+            )
+            if not tmp.empty:
+                s = tmp.astype(str)
+                break
+
+    # 2) Fallback: try patients_df (rare in cBio clinical_patients)
+    if s.empty:
+        src = _pick_first_notnull(patients_df.get("CANCER_TYPE_DETAILED"),
+                                  patients_df.get("CANCER_TYPE"))
+        if src is not None:
+            subj = _patients_subject_ids(patients_df)
+            s = pd.Series(src.values, index=subj, dtype=object)
+
+    # 3) Build output aligned to patients_df order
+    out_index = _patients_subject_ids(patients_df)
+    if s.empty:
+        out = pd.Series(["Unknown"] * len(patients_df), index=out_index, dtype=object)
+    else:
+        out = s.reindex(out_index).fillna("Unknown").astype(str)
+
+    # 4) Apply mapping
+    return out.map(dtype_map).fillna(out)
 
 def _derive_sex_at_birth(patients_df: pd.DataFrame) -> pd.Series:
     # prefer SEX, fallback to GENDER
@@ -425,10 +452,9 @@ def _derive_preservation_method(samples_df: pd.DataFrame, cfg: dict) -> pd.Serie
     return (samples_df[col].astype(str).str.strip().str.lower()
             .map(pmap).fillna(default).astype(object))
 
-def _derive_sample_fields(samples_df: pd.DataFrame, cfg: dict) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+def _derive_sample_fields(samples_df: pd.DataFrame, cfg: dict) -> tuple[pd.Series, pd.Series, pd.Series]:
     """
-    Returns (sample_type, specimen_type, tissue_type, tumor_descriptor)
-    aligned to your schema enums.
+    Returns (specimen_type, tissue_type, tumor_descriptor), aligned to your schema enums.
     """
     gm = (cfg or {}).get("gdc_mapping", {})
     raw = gm.get("sample_suffix_map", {}) or {}
@@ -438,32 +464,75 @@ def _derive_sample_fields(samples_df: pd.DataFrame, cfg: dict) -> tuple[pd.Serie
     overrides = pd.DataFrame([sfx_map.get(k, {}) for k in sfx.tolist()], index=samples_df.index)
 
     # Safe defaults for pediatric solid primaries
-    sample_type      = pd.Series("Primary Tumor", index=samples_df.index, dtype=object)   # optional but useful
     specimen_type    = pd.Series("Solid Tissue",  index=samples_df.index, dtype=object)   # material
     tissue_type      = pd.Series("Tumor",         index=samples_df.index, dtype=object)   # context
     tumor_descriptor = pd.Series("Primary",       index=samples_df.index, dtype=object)   # disease descriptor
 
     if not overrides.empty:
-        if "sample_type" in overrides:      sample_type      = overrides["sample_type"].combine_first(sample_type).astype(object)
         if "specimen_type" in overrides:    specimen_type    = overrides["specimen_type"].combine_first(specimen_type).astype(object)
         if "tissue_type" in overrides:      tissue_type      = overrides["tissue_type"].combine_first(tissue_type).astype(object)
         if "tumor_descriptor" in overrides: tumor_descriptor = overrides["tumor_descriptor"].combine_first(tumor_descriptor).astype(object)
 
-    return sample_type, specimen_type, tissue_type, tumor_descriptor
+    return specimen_type, tissue_type, tumor_descriptor
 
-def _derive_preservation_method(samples_df: pd.DataFrame, cfg: dict) -> pd.Series:
-    gm = (cfg or {}).get("gdc_mapping", {})
-    pmap = {k.lower(): v for k, v in gm.get("preservation_map", {}).items()}
-    default = gm.get("preservation_default", "Unknown")
-    col = None
-    for c in ("PRESERVATION_METHOD", "preservation_method", "PRESERVATION", "SAMPLE_PRESERVATION"):
-        if c in samples_df.columns:
-            col = c
-            break
-    if col is None:
-        return pd.Series(default, index=samples_df.index, dtype=object)
-    s = samples_df[col].astype(str).str.strip().str.lower()
-    return s.map(pmap).fillna(default).astype(object)
+def _clinical_gender_from_sex(x: Optional[pd.Series]) -> pd.Series:
+    if x is None:
+        return pd.Series(["unspecified"] * 0, dtype=object)
+    s = x.astype(str).str.strip().str.lower()
+    out = pd.Series("unspecified", index=s.index, dtype=object)
+    out = out.mask(s.str.startswith("f"), "female")
+    out = out.mask(s.str.startswith("m"), "male")
+    out = out.mask(s.str.contains("unknown"), "unknown")
+    return out
+
+def _clinical_ethnicity_2enums(x: Optional[pd.Series]) -> pd.Series:
+    # clinical.yaml allows only {hispanic or latino, not hispanic or latino}
+    if x is None:
+        return pd.Series(["not hispanic or latino"] * 0, dtype=object)
+    s = x.astype(str).str.strip().str.lower()
+    out = pd.Series("not hispanic or latino", index=s.index, dtype=object)
+    out = out.mask(s.str.contains(r"\bhispanic\b"), "hispanic or latino")
+    return out
+
+def _clinical_vital_status_from_os_status(x: Optional[pd.Series]) -> pd.Series:
+    # "1:DECEASED" -> "dead"; "0:LIVING" -> "alive"
+    if x is None:
+        return pd.Series(["alive"] * 0, dtype=object)  # safe default
+    u = x.astype(str).str.upper()
+    out = pd.Series("alive", index=u.index, dtype=object)
+    out = out.mask(u.str.contains("DECEASED", na=False), "dead")
+    out = out.mask(u.str.contains("LIVING",   na=False), "alive")
+    # you can add 'lost to follow-up' if you have a signal
+    return out
+
+def _clinical_days_to_death(os_days: Optional[pd.Series], os_status: Optional[pd.Series]) -> pd.Series:
+    if os_days is None or os_status is None:
+        return pd.Series([None] * 0, dtype=object)
+    dead = os_status.astype(str).str.upper().str.contains("DECEASED", na=False)
+    days = pd.to_numeric(os_days, errors="coerce")
+    out = pd.Series([None] * len(days), index=days.index, dtype=object)
+    out[dead] = days[dead]
+    return out
+
+# ==============================================================================
+# Metadata helpers
+# ==============================================================================
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def _ensure_dir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
+
+def _write_json(path: Path, obj: dict) -> None:
+    _ensure_dir(path.parent)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=2, ensure_ascii=False)
+
+def _write_text(path: Path, text: str) -> None:
+    _ensure_dir(path.parent)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
 
 # ==============================================================================
 # GDC Schema Registry & Validation
@@ -559,31 +628,120 @@ class GDCSchemaRegistry:
         return s
 
     # ---------- $ref massaging ----------
-    def _massage_refs(self, obj: Any) -> None:
+    def _massage_refs(self, obj: Any, parent_key: Optional[str] = None) -> None:
         """
-        - If '$ref' is a list, pick the first string ref.
-        - If '$ref' points to external local files like '_terms.yaml#/something',
-          replace with a permissive local constraint (e.g. type: string).
-          (We already inject important anchors from metaschema/_definitions.)
+        Normalize $ref forms in-place to avoid jsonschema resolver issues:
+
+        - If '$ref' is a list, keep the first string element.
+        - If a dict under 'properties' is literally {'$ref': <...>}, DROP the ref and
+        keep an empty properties map ({}). This matches how some GDC nodes embed
+        `_definitions.yaml#/ubiquitous_properties`.
+        - For external refs (strings starting with '_', e.g. '_definitions.yaml#/to_one'):
+        replace them with a permissive schema. By default we use {} (accept-any).
+        For well-known link anchors ('to_one', 'to_many') we coerce to a minimal
+        object schema to keep things a bit saner in strict runs.
+        - Recurse into nested dicts and lists.
         """
         if isinstance(obj, dict):
+            # Special: if we're sitting directly under "properties" and the entire
+            # value is just {"$ref": ...}, keep an empty map for properties.
+            if parent_key == "properties" and "$ref" in obj and len(obj) == 1:
+                obj.clear()
+                return
             if "$ref" in obj:
                 ref = obj["$ref"]
+                # Case: $ref provided as a list -> keep the first string
                 if isinstance(ref, list):
-                    ref = next((r for r in ref if isinstance(r, str)), None)
-                    if ref is None:
-                        obj.pop("$ref")
+                    first_str = next((r for r in ref if isinstance(r, str)), None)
+                    if first_str is None:
+                        obj.pop("$ref", None)
                     else:
-                        obj["$ref"] = ref
-                # avoid remote/external file refs
+                        obj["$ref"] = first_str
+                    ref = obj.get("$ref")
+                # Case: external refs to _definitions.yaml / _terms.yaml, etc.
                 if isinstance(ref, str) and ref.startswith("_"):
+                    # Be permissive by default
                     obj.pop("$ref", None)
-                    obj.setdefault("type", "string")
-            for v in obj.values():
-                self._massage_refs(v)
+                    # Small, safe heuristics for common link anchors:
+                    #   _definitions.yaml#/to_one
+                    #   _definitions.yaml#/to_many
+                    # These are objects in GDC; keep it minimally typed.
+                    lower = ref.lower()
+                    if "to_one" in lower or "to_many" in lower:
+                        obj.setdefault("type", "object")
+                        # we intentionally do NOT restrict properties/required here
+                        # to avoid over-constraining without full ref resolution
+                    else:
+                        # Accept-any (empty dict) is the safest fallback
+                        # (do nothing; the ref was already popped)
+                        pass
+            # Recurse with knowledge of the current key
+            for k, v in list(obj.items()):
+                self._massage_refs(v, parent_key=k)
+
         elif isinstance(obj, list):
             for v in obj:
-                self._massage_refs(v)
+                self._massage_refs(v, parent_key=parent_key)
+
+    def _sanitize_schema(self, s: dict) -> None:
+        """
+        Coerce positions that must be schemas into dicts.
+        - properties: each value must be a dict
+        - items / additionalProperties / not: must be dict if present
+        - allOf/anyOf/oneOf: elements must be dicts
+        """
+        if not isinstance(s, dict):
+            return
+
+        # Apply sanitization logic to ALL keys that map names to schemas, not just 'properties'.
+        for map_key in ("properties", "definitions", "$defs", "patternProperties"):
+            schema_map = s.get(map_key)
+            if isinstance(schema_map, dict):
+                for k, v in list(schema_map.items()):
+                    if isinstance(v, str):
+                        schema_map[k] = {"type": "string"}
+                    elif isinstance(v, list):
+                    # rare/invalid; coerce to anyOf of string
+                        schema_map[k] = {"anyOf": [{"type": "string"}]}
+                    elif not isinstance(v, (dict, bool)): # bools (True/False) are valid schemas
+                        schema_map[k] = {"type": "string"}
+
+        for key in ("items", "additionalProperties", "not"):
+            if key in s and not isinstance(s[key], dict):
+                s[key] = {"type": "string"}
+
+        for key in ("items", "additionalProperties", "not"):
+            if key in s:
+                val = s[key]
+                if key == "items" and isinstance(val, list):
+                    # This is tuple validation. Skip it here;
+                    # it will be handled by the schema-list loop below.
+                    continue
+                # For 'not', 'additionalProperties', or 'items' (when not a list),
+                # the value must be a valid schema (dict or bool).
+                if not isinstance(val, (dict, bool)):
+                    # Coerce any invalid value (like a string) to a basic schema.
+                    s[key] = {"type": "string"}
+
+        for key in ("allOf", "anyOf", "oneOf", "items"):
+            arr = s.get(key)
+            if isinstance(arr, list):
+                new = []
+                for el in arr:
+                    if isinstance(el, dict):
+                        new.append(el)
+                    else:
+                        new.append({"type": "string"})
+                s[key] = new
+
+        # Recurse
+        for k, v in list(s.items()):
+            if isinstance(v, dict):
+                self._sanitize_schema(v)
+            elif isinstance(v, list):
+                for el in v:
+                    if isinstance(el, dict):
+                        self._sanitize_schema(el)
 
     # ---------- required vs properties ----------
     def _ensure_required_have_props(self, s: dict) -> dict:
@@ -597,14 +755,17 @@ class GDCSchemaRegistry:
         for k in req:
             if k in props:
                 continue
-            if k in s:
-                props[k] = {"$ref": f"#/{k}"}
-                continue
-            anchor = self._lookup_anchor(k)
+            # ALWAYS prefer the global definition (from _definitions.yaml), as the local def (s[k]) is often a junk string.
+            anchor = self._lookup_anchor(k) # Finds AND normalizes the REAL schema
             if anchor is not None:
-                s[k] = anchor                  # already normalized dict
+                s[k] = anchor   # Inject the REAL, normalized schema (overwriting local junk string)
+                props[k] = {"$ref": f"#/{k}"}
+            elif k in s:
+                # Fallback: No global def, trust and normalize the local def
+                s[k] = self._normalize_anchor_obj(s[k])
                 props[k] = {"$ref": f"#/{k}"}
             else:
+                # Fallback: No def found anywhere
                 props[k] = {"type": "string"}
         return s
 
@@ -619,14 +780,17 @@ class GDCSchemaRegistry:
         for k in sysprops:
             if k in props:
                 continue
-            if k in s and isinstance(s[k], dict):
-                props[k] = {"$ref": f"#/{k}"}
-                continue
-            anchor = self._lookup_anchor(k)
+            # ALWAYS prefer the global definition
+            anchor = self._lookup_anchor(k) # Finds AND normalizes the REAL schema
             if anchor is not None:
-                s[k] = anchor           # normalized dict
+                s[k] = anchor   # Inject the REAL, normalized schema
+                props[k] = {"$ref": f"#/{k}"}
+            elif k in s:
+                # Fallback: No global def, trust and normalize the local def
+                s[k] = self._normalize_anchor_obj(s[k])
                 props[k] = {"$ref": f"#/{k}"}
             else:
+                # Fallback: No def found anywhere
                 props[k] = {"type": "string"}
         return s
 
@@ -642,8 +806,9 @@ class GDCSchemaRegistry:
             self._massage_refs(s)
             s = self._inject_common_anchors(s)
             s = self._ensure_required_have_props(s)
-            s = self._ensure_system_have_props(s)   # Option A
-            self._massage_refs(s)                   # <-- final cleanup pass
+            s = self._ensure_system_have_props(s)   
+            self._massage_refs(s)  
+            self._sanitize_schema(s)                  
             self._node_cache[node] = s
         return self._node_cache[node]
 
@@ -712,9 +877,9 @@ class GDCSchemaRegistry:
         node: str,
         mode: str = "lite",
         observed_keys: Optional[Iterable[str]] = None,
-    ) -> Draft4Validator:
+    ) -> Draft7Validator:
         """
-        Build a jsonschema Draft4 validator for the given node / mode.
+        Build a jsonschema Draft7 validator for the given node / mode.
         We avoid using RefResolver to sidestep deprecation warnings; references are
         normalized into the schema by node_schema().
         """
@@ -739,7 +904,6 @@ class GDCSchemaRegistry:
             properties, otherwise additionalProperties may fire depending on the schema.
         """
         v = self.validator(node, mode=mode, observed_keys=observed_keys)
-        props_allowed = set((self.node_schema(node).get("properties") or {}).keys())
 
         # build column subset per observed_keys if provided
         if observed_keys is not None:
@@ -750,30 +914,11 @@ class GDCSchemaRegistry:
         else:
             work = df
 
-        def _plain(vv):
-            # normalize pandas/NumPy types to plain Python
-            import numpy as np  # local import to avoid hard dep here
-            if vv is None:
-                return None
-            if vv is pd.NA:
-                return None
-            if isinstance(vv, float) and pd.isna(vv):
-                return None
-            if isinstance(vv, pd.Timestamp):
-                return vv.isoformat()
-            if isinstance(vv, np.generic):
-                return vv.item()
-            if isinstance(vv, dict):
-                return {k: _plain(x) for k, x in vv.items()}
-            if isinstance(vv, (list, tuple)):
-                return [_plain(x) for x in vv]
-            return vv
-
         errs: List[Tuple[int, str]] = []
         # iterate preserving original index values
         for i, rec in work.fillna(value=pd.NA).to_dict(orient="index").items():
-            # rec is a dict of column -> value for that row
-            clean = {k: _plain(vv) for k, vv in rec.items()}
+            tmp = {k: _plain(vv) for k, vv in rec.items()}
+            clean = {k: v for k, v in tmp.items() if v is not None}  # drop null keys
             for e in v.iter_errors(clean):
                 errs.append((i, e.message))
         return errs
@@ -803,19 +948,24 @@ def cbio_to_case(patients_csv_df: pd.DataFrame,
                  project_id: str,
                  strict: bool,
                  cfg: dict) -> pd.DataFrame:
-    # keep original patients_df for derivations; build output with submitter_id
     dfp = patients_csv_df.rename(columns={"patientId": "submitter_id"}).copy()
 
     out = pd.DataFrame({
         "submitter_id": dfp["submitter_id"].astype(str),
         "project_id": project_id,
     })
-
-    if strict:
-        out["disease_type"] = _derive_disease_type(patients_csv_df, cfg).values
-        prim = _derive_primary_site(patients_csv_df, samples_csv_df, cfg)  # <- original patients_df
-        # align to submitter_id order
+    # Even in lite mode, populate these if we can (schema-required in strict)
+    try:
+        out["disease_type"] = _derive_disease_type(patients_csv_df, samples_csv_df, cfg).values
+    except Exception:
+        if strict:
+            raise
+    try:
+        prim = _derive_primary_site(patients_csv_df, samples_csv_df, cfg)
         out["primary_site"] = prim.reindex(dfp["submitter_id"].astype(str)).fillna("Unknown").values
+    except Exception:
+        if strict:
+            raise
 
     return out.drop_duplicates("submitter_id").dropna(subset=["submitter_id"])
 
@@ -865,7 +1015,7 @@ def cbio_to_sample(samples_csv_df: pd.DataFrame,
                    cfg: dict) -> pd.DataFrame:
     sid = samples_csv_df["sampleId"].astype(str)
 
-    sample_type, specimen_type, tissue_type, tumor_desc = _derive_sample_fields(samples_csv_df, cfg)
+    specimen_type, tissue_type, tumor_desc = _derive_sample_fields(samples_csv_df, cfg)
     preserv = _derive_preservation_method(samples_csv_df, cfg)
 
     node = pd.DataFrame({
@@ -874,13 +1024,52 @@ def cbio_to_sample(samples_csv_df: pd.DataFrame,
         "specimen_type": specimen_type,     # REQUIRED (material: 'Solid Tissue', 'Peripheral Whole Blood', …)
         "tissue_type": tissue_type,         # REQUIRED (context: 'Tumor', 'Normal', …)
         "tumor_descriptor": tumor_desc,     # REQUIRED ('Primary','Recurrence','Metastatic','Unknown', …)
-        # Optional but nice to have:
-        "sample_type": sample_type,
     })
 
     # Keep case link for your graph layer (NOT part of node schema)
     node["case_submitter_id"] = _samples_subject_ids(samples_csv_df)
     return node.dropna(subset=["submitter_id"]).drop_duplicates("submitter_id")
+
+def cbio_to_clinical(patients_csv_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    GDC-like 'clinical' node (non-submittable) per schemas/clinical.yaml.
+    Required: id, submitter_id, cases (to_one link to case).
+    We keep `case_submitter_id` only for writing link parquet; drop before validation.
+    """
+    df = patients_csv_df.rename(columns={"patientId": "case_submitter_id"}).copy()
+    case_id = df["case_submitter_id"].astype(str)
+
+    # Numeric sources
+    age_days = pd.to_numeric(df.get("AGE_IN_DAYS"), errors="coerce")
+    os_days  = pd.to_numeric(df.get("OS_DAYS"), errors="coerce")
+    os_stat  = df.get("OS_STATUS")
+
+    # days_to_death only when deceased
+    if os_stat is not None:
+        dead_mask = os_stat.astype(str).str.upper().str.contains("DECEASED", na=False)
+    else:
+        dead_mask = pd.Series(False, index=df.index)
+
+    days_to_death = pd.Series([None] * len(df), index=df.index, dtype=object)
+    days_to_death[dead_mask] = os_days[dead_mask]
+
+    clinical = pd.DataFrame({
+        # required
+        "submitter_id": case_id,
+        "age_at_diagnosis": age_days,  
+        "days_to_death": days_to_death,
+        "gender": _clinical_gender_from_sex(df.get("SEX")),
+        "ethnicity": _clinical_ethnicity_2enums(df.get("ETHNICITY")),
+        "race": _norm_race(df.get("RACE")).replace({"unknown": "not reported"}),
+        "vital_status": _clinical_vital_status_from_os_status(df.get("OS_STATUS")),
+    })
+    # required 'id' (deterministic per submitter_id)
+    clinical["id"] = clinical["submitter_id"].apply(_stable_uuid5)
+    # required 'cases' (to_one link). Use submitter_id reference.
+    clinical["cases"] = case_id.map(lambda sid: {"submitter_id": sid})
+    # keep explicit link for indexes (not part of the node schema)
+    clinical["case_submitter_id"] = case_id
+    return clinical
 
 def build_idmap_from_samples(samples_csv_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -894,7 +1083,6 @@ def build_idmap_from_samples(samples_csv_df: pd.DataFrame) -> pd.DataFrame:
     out["node_id_sample"] = "sample:" + out["sample_id"].astype(str)
     return out
 
-
 def files_for_zarr(features_dir: Path, project_id: str) -> pd.DataFrame:
     """
     Build a minimal 'file' node table for Zarr feature stores in data/gdm/features/.
@@ -902,11 +1090,11 @@ def files_for_zarr(features_dir: Path, project_id: str) -> pd.DataFrame:
     """
     features = []
     mapping = {
-        "mrna":        ("Transcriptome Profiling", "Gene Expression", "RNA-Seq"),
-        "mirna":       ("Transcriptome Profiling", "miRNA Expression", "miRNA-Seq"),
-        "methylation": ("DNA Methylation",        "Methylation Beta Value", "Methylation Array"),
-        "scrna":       ("Transcriptome Profiling", "Gene Expression", "Single-Cell RNA-Seq"),
-        "scatac":      ("Epigenomics",             "Chromatin Accessibility", "Single-Cell ATAC-Seq"),
+        "mrna": ("Transcriptome Profiling", "Gene Expression", "RNA-Seq"),
+        "mirna": ("Transcriptome Profiling", "miRNA Expression", "miRNA-Seq"),
+        "methylation": ("DNA Methylation", "Methylation Beta Value", "Methylation Array"),
+        "scrna": ("Transcriptome Profiling", "Gene Expression", "Single-Cell RNA-Seq"),
+        "scatac": ("Epigenomics", "Chromatin Accessibility", "Single-Cell ATAC-Seq"),
     }
     for name, (cat, dtype, strat) in mapping.items():
         z = features_dir / f"{name}.zarr"
@@ -959,6 +1147,10 @@ def open_duckdb(path: Optional[Union[str, Path]] = None,
             if "Conflicting lock" in msg and attempt < max_retries:
                 time.sleep(retry_wait_s)
                 continue
+            # Any other IOException, or we're out of retries -> raise
+            raise
+    # If we exhausted retries on lock contention:
+    raise last_err if last_err else duckdb.IOException("Failed to open DuckDB (unknown error)")
 
 class DataModel:
     """
@@ -974,7 +1166,7 @@ class DataModel:
                  duckdb_path: Optional[Union[str, Path]] = None,
                  duckdb_mode: str = "memory",
                  strict: Optional[bool] = None,
-                 cfg_path: Union[str, Path] = "config/pipeline_config.yaml",
+                 cfg_path: Union[str, Path] = "config/gdc_mapping.yaml",
                  cfg: Optional[dict] = None,
                  ):
         # --- strict/lite switch (CLI param wins, else env, else default False) ---
@@ -1013,6 +1205,7 @@ class DataModel:
 
         # --- schema registry & filesystem layout ---
         self.schemas = GDCSchemaRegistry(schemas_dir)
+        self.schemas_dir = Path(schemas_dir) 
         self.gdm_root = Path(gdm_root)
         (self.gdm_root / "clinical").mkdir(parents=True, exist_ok=True)
         (self.gdm_root / "indexes").mkdir(parents=True, exist_ok=True)
@@ -1055,65 +1248,79 @@ class DataModel:
                       patients_csv_df: pd.DataFrame,
                       samples_csv_df: pd.DataFrame,
                       project_id: str):
-        # Build nodes
+        # ---------- Build nodes ----------
         case = cbio_to_case(patients_csv_df, samples_csv_df, project_id,
                             strict=self.strict, cfg=self._cfg)
         demo = cbio_to_demographic(patients_csv_df, strict=self.strict)
         diag = cbio_to_diagnosis(patients_csv_df)
         samp = cbio_to_sample(samples_csv_df, strict=self.strict, cfg=self._cfg)
+        clin = cbio_to_clinical(patients_csv_df)
         idmap = build_idmap_from_samples(samples_csv_df)
 
-        # Validate (lite by default; strict if DM_GDC_STRICT=1 or --strict)
+        # ---------- Validate (lite by default; strict if DM_GDC_STRICT=1 / --strict) ----------
         self.validate_node("case", case)
 
-        # demographic: validate node props only
         demo_for_validate = demo.drop(columns=["case_submitter_id"], errors="ignore")
         if not demo_for_validate.empty:
             self.validate_node("demographic", demo_for_validate)
 
-        # sample: validate node props only
         samp_for_validate = samp.drop(columns=["case_submitter_id"], errors="ignore")
         if not samp_for_validate.empty:
             self.validate_node("sample", samp_for_validate)
 
-        # Persist clinical Parquets (legacy mirrors)
+        clin_for_validate = clin.drop(columns=["case_submitter_id"], errors="ignore")
+        if not clin_for_validate.empty:
+            self.validate_node("clinical", clin_for_validate)
+
+        # ---------- Persist legacy clinical mirrors ----------
         (self.gdm_root / "clinical").mkdir(parents=True, exist_ok=True)
         case.to_parquet(self.gdm_root / "clinical/clinical_subjects.parquet",
                         compression="zstd", index=False)
         samp.to_parquet(self.gdm_root / "clinical/clinical_samples.parquet",
                         compression="zstd", index=False)
 
-        # Persist node tables
+        # ---------- Persist node tables ----------
         nroot = self.gdm_root / "nodes"
         nroot.mkdir(parents=True, exist_ok=True)
+
         case.to_parquet(nroot / "case.parquet", compression="zstd", index=False)
+
         if not demo_for_validate.empty:
             demo_for_validate.to_parquet(nroot / "demographic.parquet", compression="zstd", index=False)
             # link: demographic -> case
-            links = demo[["submitter_id", "case_submitter_id"]].rename(
+            links_demo = demo[["submitter_id", "case_submitter_id"]].rename(
                 columns={"submitter_id": "demographic_submitter_id"}
             )
             (self.gdm_root / "indexes").mkdir(parents=True, exist_ok=True)
-            links.to_parquet(self.gdm_root / "indexes/links_demographic_case.parquet",
-                            compression="zstd", index=False)
+            links_demo.to_parquet(self.gdm_root / "indexes/links_demographic_case.parquet",
+                                compression="zstd", index=False)
+
         if not samp_for_validate.empty:
             samp_for_validate.to_parquet(nroot / "sample.parquet", compression="zstd", index=False)
             # link: sample -> case
-            idx = samp[["submitter_id", "case_submitter_id"]].rename(
+            links_samp = samp[["submitter_id", "case_submitter_id"]].rename(
                 columns={"submitter_id": "sample_submitter_id"}
             )
-            idx.to_parquet(self.gdm_root / "indexes/links_sample_case.parquet",
-                        compression="zstd", index=False)
+            links_samp.to_parquet(self.gdm_root / "indexes/links_sample_case.parquet",
+                                compression="zstd", index=False)
 
-        # id map for convenience
+        if not clin_for_validate.empty:
+            clin_for_validate.to_parquet(nroot / "clinical.parquet", compression="zstd", index=False)
+            # link: clinical -> case
+            links_clin = clin[["submitter_id", "case_submitter_id"]].rename(
+                columns={"submitter_id": "clinical_submitter_id"}
+            )
+            links_clin.to_parquet(self.gdm_root / "indexes/links_clinical_case.parquet",
+                                compression="zstd", index=False)
+
+        # ---------- Indexes ----------
         (self.gdm_root / "indexes").mkdir(parents=True, exist_ok=True)
         idmap.to_parquet(self.gdm_root / "indexes/idmap.parquet",
                         compression="zstd", index=False)
 
-        # Optional: diagnosis node table (no validation to keep it lenient for now)
-        if not diag.empty:
-            diag.to_parquet(nroot / "diagnosis.parquet",
-                            compression="zstd", index=False)
+        # Optional: diagnosis node table (kept lenient)
+        if isinstance(diag, pd.DataFrame) and not diag.empty:
+            diag.to_parquet(nroot / "diagnosis.parquet", compression="zstd", index=False)
 
         # Nodes catalog (lightweight, optional)
         nodes = pd.concat([
@@ -1131,10 +1338,20 @@ class DataModel:
         nodes.to_parquet(self.gdm_root / "nodes/nodes.parquet",
                         compression="zstd", index=False)
 
+        # ---------- Return frames for metadata/reporting ----------
+        return {
+            "case": case,
+            "demographic": demo_for_validate,
+            "sample": samp_for_validate,
+            "diagnosis": diag if isinstance(diag, pd.DataFrame) else pd.DataFrame(),
+            "clinical": clin_for_validate,
+            "idmap": idmap,
+        }
+
     def write_files_for_features(self, project_id: str):
         feats = files_for_zarr(self.gdm_root / "features", project_id)
         if feats.empty:
-            return
+            return pd.DataFrame()
 
         files_root = self.gdm_root / "features"
 
@@ -1150,8 +1367,8 @@ class DataModel:
         # Required 'file' fields we can compute
         sizes_md5 = feats["__abs_path"].apply(_stat_and_md5)  # helpers from earlier
         feats["file_size"] = sizes_md5.apply(lambda t: t[0])
-        feats["md5sum"]    = sizes_md5.apply(lambda t: t[1])
-        feats["state"]     = _gdc_file_state()  # e.g., "validated"
+        feats["md5sum"] = sizes_md5.apply(lambda t: t[1])
+        feats["state"] = _gdc_file_state()  # e.g., "validated"
 
         # If schema requires submitter_id, add it; otherwise we won't include it
         req = self.schemas.required_fields_for("file")
@@ -1177,7 +1394,154 @@ class DataModel:
         file_node.to_parquet(out_dir / "file.parquet", compression="zstd", index=False)
         feats.drop(columns=["__abs_path"], errors="ignore") \
             .to_parquet(out_dir / "file_full.parquet", compression="zstd", index=False)
+        return file_node
 
+     # ---------- non-raising validation (for reports) ----------
+    def validate_df_report(
+        self,
+        node: str,
+        df: pd.DataFrame,
+        required_cols: Optional[List[str]] = None,
+    ) -> dict:
+        """
+        Run validation and ALWAYS return a structured report dict:
+          {"node":..., "rows": N, "errors": [{"row_index": i, "message": msg}, ...]}
+        Does not raise. Respects strict/lite modes same as validate_node().
+        """
+        if self.strict:
+            check_df = df
+            mode = "strict"
+            obs = None
+        else:
+            if required_cols:
+                missing = [c for c in required_cols if c not in df.columns]
+                if missing:
+                    # Report the missing fields as "fatal"
+                    return {
+                        "node": node, "rows": len(df),
+                        "errors": [{"row_index": None, "message": f"Missing required columns: {missing}"}]
+                    }
+                check_df = df[required_cols]
+            else:
+                check_df = df
+            mode = "lite"
+            obs = df.columns.tolist()
+
+        errs = self.schemas.validate_df(node, check_df, mode=mode, observed_keys=obs)
+        return {
+            "node": node,
+            "rows": int(len(df)),
+            "errors": [{"row_index": int(i) if i is not None else None, "message": str(msg)} for i, msg in errs]
+        }
+
+    # ---------- examples & metadata bundle ----------
+    def dump_example_rows(
+        self,
+        out_dir: Path,
+        node_frames: dict[str, pd.DataFrame],
+        cancer_type: str = "default"
+    ) -> None:
+        """
+        Collect one example row per node and write them all into a single JSON file,
+        named <CancerType>_examples.json.
+        """
+        examples: dict[str, dict] = {}
+        for node, df in node_frames.items():
+            if df is None or df.empty:
+                continue
+            rec = df.iloc[0].to_dict()
+            rec = {k: _plain(v) for k, v in rec.items()}
+            examples[node] = rec
+
+        if examples:
+            _ensure_dir(out_dir)
+            # slug: letters, numbers, dash/underscore only
+            safe_ct = (
+                str(cancer_type)
+                .strip()
+                .replace(" ", "_")
+            )
+            safe_ct = "".join(ch for ch in safe_ct if ch.isalnum() or ch in ("-", "_"))
+            _write_json(out_dir / f"{safe_ct}_examples.json", examples)
+
+    def emit_metadata_bundle(
+        self,
+        project_id: str,
+        nodes_in_scope: list[str],
+        validation_reports: list[dict],
+        provenance: dict,
+        out_root: Optional[Path] = None,
+    ) -> None:
+        """
+        Write the 4 metadata files into data/metadata/ (or provided root).
+        """
+        out_root = out_root or (self.gdm_root.parent / "metadata")
+        _ensure_dir(out_root)
+
+        # 1) dictionary "version" snapshot (path + nodes + mode + timestamp)
+        dict_snapshot = {
+            "schemas_dir": str(self.schemas_dir) if hasattr(self, "schemas_dir") else None,
+            "nodes_validated": nodes_in_scope,
+            "strict_mode": bool(self.strict),
+            "timestamp": _now_iso(),
+            "project_id": project_id,
+        }
+        # best-effort: record a few enums for transparency
+        enums = {}
+        for n in nodes_in_scope:
+            try:
+                enums[n] = self.schemas.enums_for(n)
+            except Exception:
+                pass
+        dict_snapshot["selected_enums"] = enums
+        _write_json(out_root / "gdcdictionary_version.json", dict_snapshot)
+
+        # 2) provenance.json (caller-provided + environment)
+        prov = dict(provenance or {})
+        prov.update({
+            "timestamp": _now_iso(),
+            "project_id": project_id,
+            "python": sys.version,
+            "pandas": pd.__version__,
+            "duckdb": duckdb.__version__,
+        })
+        _write_json(out_root / "provenance.json", prov)
+
+        # 3) validation_report.json
+        agg = {
+            "project_id": project_id,
+            "timestamp": _now_iso(),
+            "strict_mode": bool(self.strict),
+            "reports": validation_reports,
+            "totals": {
+                "nodes": len(validation_reports),
+                "rows": sum(r.get("rows", 0) for r in validation_reports),
+                "errors": sum(len(r.get("errors", [])) for r in validation_reports),
+            }
+        }
+        _write_json(out_root / "validation_report.json", agg)
+
+        # 4) validation_report.md (human summary)
+        lines = []
+        lines.append(f"# Validation Report — {project_id}")
+        lines.append(f"- Timestamp: {agg['timestamp']}")
+        lines.append(f"- Strict mode: {agg['strict_mode']}")
+        lines.append("")
+        for r in validation_reports:
+            node = r["node"]
+            rows = r["rows"]
+            errn = len(r["errors"])
+            lines.append(f"## {node}")
+            lines.append(f"- Rows: {rows}")
+            lines.append(f"- Errors: {errn}")
+            if errn:
+                preview = r["errors"][:10]
+                lines.append("  - First errors:")
+                for e in preview:
+                    lines.append(f"    - row {e['row_index']}: {e['message']}")
+            lines.append("")
+        _write_text(out_root / "validation_report.md", "\n".join(lines))
+    
     # ---------- DuckDB views ----------
     def attach_views(self):
         """
@@ -1199,6 +1563,8 @@ class DataModel:
             "mirna_cols":      self.gdm_root / "indexes/mirna_cols.parquet",
             "methyl_rows":     self.gdm_root / "indexes/methyl_rows.parquet",
             "methyl_cols":     self.gdm_root / "indexes/methyl_cols.parquet",
+            "gdc_clinical":   self.gdm_root / "nodes/clinical.parquet",
+            "links_clinical_case": self.gdm_root / "indexes/links_clinical_case.parquet",
         }
 
         for view_name, p in reg.items():
@@ -1229,7 +1595,7 @@ class DataModel:
 # ---config-aware entrypoints for the pipeline ---
 
 def _cfg_load(path: Optional[str] = None) -> dict:
-    cfg_path = path or os.getenv("CONFIG_PATH", "config/pipeline_config.yaml")
+    cfg_path = path or os.getenv("CONFIG_PATH", "config/gdc_mapping.yaml")
     try:
         with open(cfg_path, "r") as f:
             return yaml.safe_load(f) or {}
@@ -1244,19 +1610,16 @@ def build_data_model(
     schemas_dir: Optional[str] = None,
     gdm_root: Optional[str] = None,
     strict: Optional[bool] = None,
-) -> None:
-    """
-    Build/append GDC-shaped Parquets under data/gdm/ for ALL cancer types in config.
-    Uses CSVs written by extractor at data/fetch/cbioportal_api_request/<CancerType>/.
-    """
+    ) -> None:
     cfg = _cfg_load()
     schemas_dir = schemas_dir or cfg.get("schemas_dir", "src/gdcdictionary/schemas")
-    gdm_root    = gdm_root    or cfg.get("gdm_root", "data/gdm")
-    project_id  = project_id  or cfg.get("project_id", "wt_target_gdc")
-    strict      = strict if strict is not None else _env_flag("DM_GDC_STRICT", default=False)
+    gdm_root = gdm_root or cfg.get("gdm_root", "data/gdm")
+    project_id = project_id or cfg.get("project_id", "wt_target_gdc")
+    strict = strict if strict is not None else _env_flag("DM_GDC_STRICT", default=False)
 
-    cbio_root   = Path("data") / "fetch" / "cbioportal_api_request"
+    cbio_root = Path("data") / "fetch" / "cbioportal_api_request"
     cancer_types = cfg.get("cancer_type_interest", []) or []
+    print(cancer_types)
 
     with DataModel(
         schemas_dir=schemas_dir,
@@ -1264,6 +1627,10 @@ def build_data_model(
         strict=strict,
     ) as dm:
         any_written = False
+        all_reports = []
+        provenance_sources = []
+        file_node_df = pd.DataFrame()  # <-- define once, outside loop
+
         for ct in cancer_types:
             cbio_dir = _ct_dir(cbio_root, ct)
             pat_csv = cbio_dir / "clinical_patients.csv"
@@ -1273,17 +1640,88 @@ def build_data_model(
                 continue
 
             patients = pd.read_csv(pat_csv)
-            samples  = pd.read_csv(sam_csv)
-            dm.write_case_bundle(patients, samples, project_id=project_id)
+            samples = pd.read_csv(sam_csv)
+
+            node_frames = dm.write_case_bundle(patients, samples, project_id=project_id)
             any_written = True
 
-        # features -> 'file' node (if any Zarrs exist)
-        if any_written:
-            dm.write_files_for_features(project_id=project_id)
-            dm.attach_views()
-            print("[data_model] GDM tables written and views attached.")
-        else:
+            # per-node validation reports (non-raising)
+            rep_case = dm.validate_df_report("case", node_frames["case"], dm.schemas.required_fields_for("case"))
+            rep_demo = dm.validate_df_report("demographic", node_frames["demographic"],
+                                             dm.schemas.required_fields_for("demographic")) if not node_frames["demographic"].empty else {"node":"demographic","rows":0,"errors":[]}
+            rep_samp = dm.validate_df_report("sample", node_frames["sample"],
+                                             dm.schemas.required_fields_for("sample")) if not node_frames["sample"].empty else {"node":"sample","rows":0,"errors":[]}
+            rep_diag = {"node":"diagnosis","rows":int(len(node_frames["diagnosis"])), "errors": []}  # lenient
+            rep_clin = dm.validate_df_report("clinical", node_frames["clinical"],
+                                 dm.schemas.required_fields_for("clinical")) \
+                       if not node_frames["clinical"].empty else {"node":"clinical","rows":0,"errors":[]}
+            all_reports.extend([rep_case, rep_demo, rep_samp, rep_diag, rep_clin])
+
+            provenance_sources.append({
+                "cancer_type": ct,
+                "cbioportal_dir": str(cbio_dir),
+                "clinical_patients_csv": str(pat_csv),
+                "clinical_samples_csv": str(sam_csv),
+                "row_counts": {
+                    "patients": int(len(patients)),
+                    "samples": int(len(samples))
+                }
+            })
+
+            # ---- dump consolidated human-readable examples per cancer ----
+            dm.dump_example_rows(
+                dm.gdm_root.parent / "metadata",
+                {
+                    "case":        node_frames["case"],
+                    "demographic": node_frames["demographic"],
+                    "sample":      node_frames["sample"],
+                    "diagnosis":   node_frames["diagnosis"],
+                    "clinical":    node_frames["clinical"],
+                    "file":        pd.DataFrame(),  # file examples added after loop (project-level)
+                },
+                cancer_type=ct
+            )
+
+        # ---- after processing all cancers ----
+        if not any_written:
             print("[data_model] nothing to write (no clinical CSVs found).")
+            return
+
+        # Register feature stores into 'file' node (once)
+        file_node_df = dm.write_files_for_features(project_id=project_id)
+        if not file_node_df.empty:
+            rep_file = dm.validate_df_report("file", file_node_df, dm.schemas.required_fields_for("file"))
+            all_reports.append(rep_file)
+
+        # Attach views once
+        dm.attach_views()
+        print("[data_model] GDM tables written and views attached.")
+
+        # ---- emit metadata bundle (once) ----
+        nodes_in_scope = ["case", "demographic", "sample", "diagnosis"]
+        if not file_node_df.empty:
+            nodes_in_scope.append("file")
+
+        provenance = {
+            "sources": provenance_sources,
+            "features_root": str(dm.gdm_root / "features"),
+            "notes": "Clinical/omics fetched from cBioPortal + CCDI; transformed to GDC-shaped nodes."
+        }
+        dm.emit_metadata_bundle(
+            project_id=project_id,
+            nodes_in_scope=nodes_in_scope,
+            validation_reports=all_reports,
+            provenance=provenance,
+            out_root=dm.gdm_root.parent / "metadata",  # -> data/metadata/
+        )
+
+        # ---- optional: write a project-level features exemplar ----
+        if not file_node_df.empty:
+            dm.dump_example_rows(
+                dm.gdm_root.parent / "metadata",
+                {"file": file_node_df},
+                cancer_type=f"{project_id}_features"
+            )
 
 def run_duckdb_query(sql: str, out: Optional[str] = None) -> None:
     """
@@ -1318,11 +1756,11 @@ if __name__ == "__main__":
     """
     Example usage (run inside Docker container):
 
-      python -m src.data_model \
-        --schemas-dir src/gdcdictionary/schemas \
-        --gdm-root data/gdm \
-        --cbio-dir data/cbioportal_api_request/Wilms_Tumor \
-        --project-id wt_target_gdc
+    python -m src.data_model \
+    --schemas-dir src/gdcdictionary/schemas \
+    --gdm-root data/gdm \
+    --cbio-dir data/fetch/cbioportal_api_request/Wilms_Tumor \
+    --project-id wt_target_gdc
 
     Environment overrides:
       DM_DUCKDB_MODE = memory | ro | rw   (default: memory)
@@ -1338,7 +1776,7 @@ if __name__ == "__main__":
     parser.add_argument("--project-id", default="wt_target_gdc", help="Project ID to stamp on 'case' and 'file'.")
     parser.add_argument("--strict", dest="strict", action="store_true", help="Force strict GDC validation.")
     parser.add_argument("--no-strict", dest="strict", action="store_false")
-    parser.set_defaults(strict=None)  # None -> defer to env    
+    parser.set_defaults(strict=None)  # None -> defer to env
     args = parser.parse_args()
 
     duckdb_mode = os.getenv("DM_DUCKDB_MODE", "memory")     # memory|ro|rw
@@ -1371,6 +1809,9 @@ if __name__ == "__main__":
             "HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR": ["FHWT", "DAWT"]
         })
 
+    # Derive a human-readable cancer type from the folder name (e.g., "Wilms_Tumor" -> "Wilms Tumor")
+    cancer_type = Path(args.cbio_dir).name.replace("_", " ")
+
     with DataModel(
         schemas_dir=args.schemas_dir,
         gdm_root=args.gdm_root,
@@ -1378,53 +1819,87 @@ if __name__ == "__main__":
         duckdb_mode=duckdb_mode,
         strict=cli_strict,
     ) as dm:
-        '''
-        req = dm.schemas.required_fields_for("sample")
-        enums = dm.schemas.enums_for("sample")
-        print("SAMPLE.required:", req)
-        for k, vals in enums.items():
-            print(f"  {k}: {vals[:8]}{' …' if len(vals)>8 else ''}")
-        '''
-        # 1) Project/validate/write Parquet node tables under data/gdm/
-        dm.write_case_bundle(patients, samples, project_id=args.project_id)
-
-        # 2) Register feature files under data/gdm/features as 'file' nodes (if present)
-        dm.write_files_for_features(project_id=args.project_id)
-
-        # 3) Attach TEMP VIEWs for DuckDB queries
+        # Build node bundles
+        node_frames = dm.write_case_bundle(patients, samples, project_id=args.project_id)
+        file_node_df = dm.write_files_for_features(project_id=args.project_id)
         dm.attach_views()
 
-        # 4) Example queries
-        print("\n[demo] Subjects, samples (head):")
-        try:
-            print(dm.sql("SELECT * FROM subjects LIMIT 5"))
-            print(dm.sql("SELECT * FROM samples  LIMIT 5"))
-        except duckdb.Error as e:
-            print(f"[warn] Query failed: {e}")
+        # Build validation reports
+        reports = [
+            dm.validate_df_report("case", node_frames["case"], dm.schemas.required_fields_for("case")),
+            dm.validate_df_report("demographic", node_frames["demographic"],
+                                  dm.schemas.required_fields_for("demographic")) if not node_frames["demographic"].empty else {"node":"demographic","rows":0,"errors":[]},
+            dm.validate_df_report("sample", node_frames["sample"],
+                                  dm.schemas.required_fields_for("sample")) if not node_frames["sample"].empty else {"node":"sample","rows":0,"errors":[]},
+            {"node":"diagnosis","rows":int(len(node_frames["diagnosis"])), "errors":[]}
+        ]
+        if not file_node_df.empty:
+            reports.append(dm.validate_df_report("file", file_node_df, dm.schemas.required_fields_for("file")))
 
-        # Example cohort: "stage III" & female -> sample_ids (if columns exist)
-        try:
-            q = """
-            WITH cohort_subj AS (
-            SELECT c.submitter_id AS subject_id
-            FROM gdc_case c
-            LEFT JOIN gdc_diagnosis d
-                ON d.case_submitter_id = c.submitter_id
-            LEFT JOIN links_demographic_case ldc
-                ON ldc.case_submitter_id = c.submitter_id
-            LEFT JOIN gdc_demographic demo
-                ON demo.submitter_id = ldc.demographic_submitter_id
-            WHERE upper(coalesce(d.tumor_stage, '')) LIKE 'III%'
-                AND lower(coalesce(demo.sex_at_birth, '')) = 'female'
+        # Provenance bundle for this demo run
+        provenance = {
+            "sources": [{
+                "cbioportal_dir": str(args.cbio_dir),
+                "clinical_patients_csv": str(pat_csv),
+                "clinical_samples_csv": str(sam_csv),
+                "row_counts": {
+                    "patients": int(len(patients)),
+                    "samples": int(len(samples))
+                }
+            }],
+            "notes": "Demo run with cBioPortal + CCDI extracts"
+        }
+
+        nodes_in_scope = ["case","demographic","sample","diagnosis"]
+        if not file_node_df.empty:
+            nodes_in_scope.append("file")
+
+        out_meta = Path(args.gdm_root).parent / "metadata"
+        dm.emit_metadata_bundle(
+            project_id=args.project_id,
+            nodes_in_scope=nodes_in_scope,
+            validation_reports=reports,
+            provenance=provenance,
+            out_root=out_meta
+        )
+
+        # ---- Per-cancer example file (prefix) ----
+        dm.dump_example_rows(
+            out_meta,
+            {
+                "case": node_frames["case"],
+                "demographic": node_frames["demographic"],
+                "sample": node_frames["sample"],
+                "diagnosis": node_frames["diagnosis"],
+                "clinical": node_frames["clinical"],
+            },
+            cancer_type=cancer_type
+        )
+
+        # ---- Optional: project-level features exemplar ----
+        if not file_node_df.empty:
+            dm.dump_example_rows(
+                out_meta,
+                {"file": file_node_df},
+                cancer_type=f"{args.project_id}_features"
             )
-            SELECT DISTINCT i.sample_id
-            FROM cohort_subj c
-            JOIN idmap i USING (subject_id)
-            ORDER BY 1;
-            """
-            print("\n[demo] Stage III female cohort sample_ids:")
-            print(dm.sql(q))
-        except duckdb.Error as e:
-            print(f"[warn] Cohort query failed: {e}")
 
-        print("\n[demo] Done.")
+        # ---- Print summary ----
+        print("\n[demo] Metadata written to:", out_meta)
+        for f in sorted(out_meta.glob("*")):
+            print(" -", f.name)
+
+        # Show quick preview of validation_report.md
+        vr_md = out_meta / "validation_report.md"
+        if vr_md.exists():
+            print("\n[demo] validation_report.md (first 20 lines):")
+            with open(vr_md, "r", encoding="utf-8") as fh:
+                for i, line in enumerate(fh):
+                    print(line.rstrip())
+                    if i >= 19:
+                        break
+
+        # Show any *_examples.json files as a sanity check
+        for exfile in sorted(out_meta.glob("*_examples.json")):
+            print(f"\n[demo] {exfile.name}:")
+            print(open(exfile, "r", encoding="utf-8").read())

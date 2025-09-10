@@ -1,0 +1,57 @@
+# config/gdc_mapping.yaml
+
+# ---- Project & scope ----
+project_id: GAIPO                        
+cancer_type_interest:
+  - Wilms Tumor
+  - Glioma
+
+# ---- Paths used by the pipeline ----
+schemas_dir: src/gdcdictionary/schemas        # used by build_data_model() / DataModel
+gdm_root:   data/gdm                          # output node/files/indexes Parquet root
+
+# 1) the rest of your mapping (unchanged; keep as-is)
+gdc_mapping:
+  disease_type_map:
+    "Wilms Tumor": "Neoplasms, NOS"
+    "Wilms' Tumor": "Neoplasms, NOS"
+    "Glioma": "Gliomas"
+  primary_site_map:
+    "Wilms Tumor": "Kidney"
+    "Glioma": "Brain"
+  icdo_topography_map:
+    C649: "Kidney"
+    C710: "Brain"
+    C719: "Brain"
+  icdo_morph_to_site_map:
+    "8960": "Kidney"
+    "9380": "Brain"
+    "9400": "Brain"
+  oncotree_to_site:
+    WT: "Kidney"
+    LGG: "Brain"
+    HGG: "Brain"
+  sample_suffix_map:
+    "01": { specimen_type: "Solid Tissue", tissue_type: "Tumor", tumor_descriptor: "Primary", sample_type: "Primary Tumor" }
+    "02": { specimen_type: "Solid Tissue", tissue_type: "Tumor", tumor_descriptor: "Recurrence", sample_type: "Recurrent Tumor" }
+    "03": { specimen_type: "Solid Tissue", tissue_type: "Tumor",  tumor_descriptor: "Primary", sample_type: "Primary Tumor" }
+    "06": { specimen_type: "Solid Tissue", tissue_type: "Normal", tumor_descriptor: "Unknown", sample_type: "Solid Tissue Normal" }
+    "10": { specimen_type: "Peripheral Whole Blood", tissue_type: "Normal", tumor_descriptor: "Unknown", sample_type: "Blood Derived Normal" }
+  preservation_map:
+    ffpe: FFPE
+    formalin-fixed paraffin-embedded: FFPE
+    frozen: Frozen
+    fresh_frozen: Frozen
+    fresh frozen: Frozen
+    fresh: Fresh
+    snap frozen: Snap Frozen
+    cryopreserved: Cryopreserved
+    edta: EDTA
+    oct: OCT
+  preservation_default: Unknown
+
+# 2) Output root override (rarely needed; your module computes these)
+output_roots:
+  fetch_root: "data/fetch"
+  gdm_root:   "data/gdm"
+  schemas_dir: src/gdcdictionary/schemas
