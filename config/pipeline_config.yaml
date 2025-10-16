@@ -2,8 +2,9 @@
 
 # 0) optional auth (kept null by default)
 auth:
-  cbioportal_api_token: null        # or set via env CBIOPORTAL_API_TOKEN
   ccdi_api_token: null              # not needed currently
+  cbioportal_api_token: null        # or set via env CBIOPORTAL_API_TOKEN
+  pedcbioportal_api_token: YOUR_TOKEN
 
 # 1) services (you already have these)
 services:
@@ -11,6 +12,8 @@ services:
   ccdi_subject_diagnosis: "https://federation.ccdi.cancer.gov/api/v1/subject-diagnosis"
   cbioportal_api: "https://www.cbioportal.org/api"
   cbioportal_swagger: "https://www.cbioportal.org/api/v2/api-docs"
+  pedcbioportal_api: "https://pedcbioportal.kidsfirstdrc.org/api"
+  pedcbioportal_swagger: "https://pedcbioportal.kidsfirstdrc.org/api/v2/api-docs"
 
 # 2) source filter (null = all)
 target_source: null   # "PCDC" | "Treehouse" | "StJude" | "KidsFirst" | "ccdi-ecDNA"
@@ -43,94 +46,49 @@ custom_type_terms: {}
 # 5) which types you want right now
 cancer_type_interest:
   - "Wilms Tumor"
-  # - "Glioma"
+  - "Glioma"
 
 # 6) study IDs (used when writing idmap parquet)
-studyId:
-  "Wilms Tumor": "wt_target_2018_pub"
-  # "Glioma": "brain_cptac_2020"
+cBio_studyId:
+  #"Wilms Tumor": "wt_target_2018_pub"
+  "Glioma": "brain_cptac_2020"
+pedcBio_studyId:
+  #"Wilms Tumor": null
+  "Glioma": "pbta_all"
 
 # What expression profiles to pull for each type
 # valid keys: mrna, mirna, methylation, linear_cna
 expression_profiles:
-  "Wilms Tumor":
-    - mrna
-    - mirna
-    - methylation
-  "Glioma":
-    - mrna
-    - linear_cna
+  "Wilms Tumor": [mrna, microrna, methylation]
+  "Glioma": [mrna, linear_cna]
 
-# 7) the rest of your mapping (unchanged; keep as-is)
-gdc_mapping:
-  disease_type_map:
-    "Wilms Tumor": "Neoplasms, NOS"
-    "Wilms' Tumor": "Neoplasms, NOS"
-    "Glioma": "Gliomas"
-  primary_site_map:
-    "Wilms Tumor": "Kidney"
-    "Glioma": "Brain"
-  icdo_topography_map:
-    C649: "Kidney"
-    C710: "Brain"
-    C719: "Brain"
-  icdo_morph_to_site_map:
-    "8960": "Kidney"
-    "9380": "Brain"
-    "9400": "Brain"
-  oncotree_to_site:
-    WT: "Kidney"
-    LGG: "Brain"
-    HGG: "Brain"
-  sample_suffix_map:
-    "01": { specimen_type: "Solid Tissue",           tissue_type: "Tumor",  tumor_descriptor: "Primary",    sample_type: "Primary Tumor" }
-    "02": { specimen_type: "Solid Tissue",           tissue_type: "Tumor",  tumor_descriptor: "Recurrence", sample_type: "Recurrent Tumor" }
-    "03": { specimen_type: "Solid Tissue",           tissue_type: "Tumor",  tumor_descriptor: "Primary",    sample_type: "Primary Tumor" }
-    "06": { specimen_type: "Solid Tissue",           tissue_type: "Normal", tumor_descriptor: "Unknown",    sample_type: "Solid Tissue Normal" }
-    "10": { specimen_type: "Peripheral Whole Blood", tissue_type: "Normal", tumor_descriptor: "Unknown",    sample_type: "Blood Derived Normal" }
-  preservation_map:
-    ffpe: FFPE
-    formalin-fixed paraffin-embedded: FFPE
-    frozen: Frozen
-    fresh_frozen: Frozen
-    fresh frozen: Frozen
-    fresh: Fresh
-    snap frozen: Snap Frozen
-    cryopreserved: Cryopreserved
-    edta: EDTA
-    oct: OCT
-  preservation_default: Unknown
-
-# 8) Output root override (rarely needed; your module computes these)
-output_roots:
-  fetch_root: "data/fetch"
-  gdm_root:   "data/gdm"
-  schemas_dir: src/gdcdictionary/schemas
-
-# 9) Processor label settings (per cancer type)
+# 7) Processor label settings (per cancer type)
 processor:
   labels:
-    "Wilms Tumor":
+    Wilms Tumor:
       source: samples
       column: HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR
       map: "FHWT=0,DAWT=1"
-      top_k: 500
-      test_size: 0.3
+      # mrna, mirna, methylation
+      var_threshold: [0.005, 0.001, 0.01]
+      alpha: [0.05, 0.1, 0.05]
+      top_k: [500, 200, 500]
+      test_size: 0.2
       seed: 42
     # "Glioma":
     #   source: samples
     #   column: CANCER_TYPE
     #   map: "low-grade=0,high-grade=1"
-    #   top_k: 500
+    #   var_threshold: [0.005, 0.001, 0.01]
+    #   alpha: [0.05, 0.10, 0.05]
+    #   top_k: [500, 500, 500]
     #   test_size: 0.2
     #   seed: 42
-
 
 # 10) graph_constructor.py
 patient_similarity_graph:
   edges_per_node: 5  
   save_graphml: false 
-
 
 # 11) graph_ai_model.py
 model_mogonet:
@@ -139,7 +97,7 @@ model_mogonet:
   edges_per_node: 5
   gcn_hidden: [400, 400, 200]
   epochs: { pretrain: 50, train: 400}
-  lr: { enc_pretrain: 1.0e-4, enc: 1.0e-4, clf: 1.0e-4 }
+  lr: { enc_pretrain: 1.0e-3, enc: 5.0e-4, clf: 1.0e-3}
   device: cpu
 
 # 12) post_analysis.py
@@ -152,7 +110,7 @@ post_analysis:
     title: "Overall Survival by Histology"
     out_dir: data/analysis/km
 
-  ablation:
+  feature_selection:
     enabled: true
     edges_per_node: 5
-    out_dir: data/analysis/ablation
+    out_dir: data/analysis/feature_selection
