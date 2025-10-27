@@ -4,13 +4,13 @@ processor.py — Bulk omics preprocessing for Glioma & Wilms Tumor
 Goals
 -----
 1) Load clinical tables and bulk omics matrices fetched from cBioPortal (CSV/TSV) that
-   the extractor wrote under: data/fetch/cbioportal_api_request/<Cancer_Type>/.
+   the extractor wrote under: data/fetch/cbioportal_api_request/<cbio|pedcbio>/<Cancer_Type>/.
 2) Align sample-level omics with patient-level clinical labels.
    - Glioma: patient/sample IDs often align directly (or derive patient by trimming '-NN').
-   - Wilms Tumor: map sampleId → patientId using CCDI mapping
+   - Wilms Tumor: map sampleId -> patientId using CCDI mapping
      data/fetch/ccdi_api_request/sample_ids/<cancer_type>.csv (columns: sample_id, subject_id).
    - If multiple samples per patient, aggregate to patient-level features (median per gene).
-3) Pre-select top-K features per modality using a training-only fit (VarianceThreshold → FDR(ANOVA F) → KBest),
+3) Pre-select top-K features per modality using a training-only fit (VarianceThreshold -> FDR(ANOVA F) -> KBest),
    then optionally scale (z-score / min–max) *after* selection to avoid leakage.
 4) Output:
    - Clean feature matrices per modality (patients × features), aligned to the label index.
@@ -22,12 +22,12 @@ Notes
 - cBioPortal expression TSVs typically come as (genes × samples) with leading columns:
   ['hugoGeneSymbol', 'entrezGeneId']. We set 'hugoGeneSymbol' as index and transpose to (samples × genes).
 - Without CCDI mapping:
-    • If labels are patient-based, we attempt a light coercion from sampleId → patientId by trimming a final
-      '-NN' suffix (e.g., TARGET-xx-xxxx-01 → TARGET-xx-xxxx). If that fails, provide the CCDI mapping CSV.
+    • If labels are patient-based, we attempt a light coercion from sampleId -> patientId by trimming a final
+      '-NN' suffix (e.g., TARGET-xx-xxxx-01 -> TARGET-xx-xxxx). If that fails, provide the CCDI mapping CSV.
     • If labels are sample-based, keep sample indexing; however, this processor currently expects patient-level labels
       for multi-modal alignment and will error without a mapping.
 - Feature selection pipeline:
-    VarianceThreshold(threshold=0.01) → SelectFdr(f_classif, alpha=0.05) → SelectKBest(f_classif, k=top_k)
+    VarianceThreshold(threshold=0.01) -> SelectFdr(f_classif, alpha=0.05) -> SelectKBest(f_classif, k=top_k)
   After selection, optional normalization can be applied (z-score and/or min–max).
 - Files written to: data/gdm/filtered/<Cancer_Type>/
     mrna.parquet, mirna.parquet, methylation.parquet              # full filtered matrices (patients × features)
@@ -51,15 +51,15 @@ pipeline_config.yaml:
         seed: 42
 
 Run:
-  python -m src.main --call process
+  python -m src.main --call data_process
   # or as part of the chain:
-  python -m src.main --call data_fetch,data_extract,process
+  python -m src.main --call data_fetch,data_extract,data_process
 
 Ad-hoc CLI usage
 ----------------
 Wilms Tumor:
   python src/processor.py \
-    --cbio-dir data/fetch/cbioportal_api_request/Wilms_Tumor \
+    --cbio-dir data/fetch/cbioportal_api_request/cbio/wilms_tumor/wt_target_2018_pub \
     --ccdi-csv data/fetch/ccdi_api_request/sample_ids/wilms_tumor.csv \
     --cancer-type "Wilms Tumor" \
     --modalities mrna mirna methylation \
@@ -70,7 +70,7 @@ Wilms Tumor:
 
 Glioma (example single-modality):
   python src/processor.py \
-    --cbio-dir data/fetch/cbioportal_api_request/Glioma \
+    --cbio-dir data/fetch/cbioportal_api_request/pedcbio/glioma/pbta_all \
     --cancer-type "Glioma" \
     --modalities mrna \
     --label-source samples \
@@ -264,7 +264,7 @@ def _build_binary_labels_general(
     if mapping_series is not None and label_source == "samples" and collapse_to_patient:
         idx = labels.index.intersection(mapping_series.index)
         if idx.empty:
-            raise ValueError("No overlap between labels (samples) and mapping (sampleId→patientId).")
+            raise ValueError("No overlap between labels (samples) and mapping (sampleId->patientId).")
         tmp = pd.DataFrame({"y": labels.loc[idx], "patientId": mapping_series.loc[idx].values})
         labels = tmp.groupby("patientId")["y"].first().astype(int)
         labels.index.name = "patientId"
@@ -365,7 +365,7 @@ def _build_clinical_filtered(clin_pat: pd.DataFrame,
 # Main orchestration
 # ==========================
 
-def _find_omics_file(cbio_dir: Path, mod: str) -> Path:
+def _find_omics_file(rawData_dir: Path, mod: str) -> Path:
     """
     Find a TSV written by extractor for the requested modality.
     We accept common patterns per cBioPortal profile names.
@@ -386,13 +386,13 @@ def _find_omics_file(cbio_dir: Path, mod: str) -> Path:
         ],
     }
     for pat in patterns.get(mod, []):
-        hits = list(cbio_dir.glob(pat))
+        hits = list(rawData_dir.glob(pat))
         if hits:
             return sorted(hits)[0]
-    raise FileNotFoundError(f"No TSV found for modality '{mod}' in {cbio_dir}")
+    raise FileNotFoundError(f"No TSV found for modality '{mod}' in {rawData_dir}")
 
 def load_and_prepare(
-    cbio_dir: Path,
+    rawData_dir: Path,
     ccdi_csv: Optional[Path],
     cancer_type: str,
     modalities: List[str],
@@ -403,22 +403,14 @@ def load_and_prepare(
     random_state: int = 42,
     label_map: Optional[str] = None,
     var_threshold=0.01,
-    alpha=0.05,   
+    alpha=0.05,
 ):
-    """
-    Load clinical and omics data, align to patientId, build binary labels, pre-select features, split train/test.
-    Returns:
-      X_tr_dict, X_te_dict, y_tr, y_te, tr_ids, te_ids, inv_label_map, omics_dict
-    """
-    # Clinical tables
-    clin_pat = pd.read_csv(cbio_dir / "clinical_patients.csv")
-    clin_sam = pd.read_csv(cbio_dir / "clinical_samples.csv")
+    clin_pat = pd.read_csv(rawData_dir / "clinical_patients.csv")
+    clin_sam = pd.read_csv(rawData_dir / "clinical_samples.csv")
 
-    # CCDI mapping -> Series(sampleId -> patientId)
     mapping_series = None
     if ccdi_csv is not None and Path(ccdi_csv).exists():
         ccdi = pd.read_csv(ccdi_csv)
-        # support both your CCDI mapping (sample_id,subject_id) and passthrough
         rename = {}
         if "sample_id" in ccdi.columns: rename["sample_id"] = "sampleId"
         if "subject_id" in ccdi.columns: rename["subject_id"] = "patientId"
@@ -428,7 +420,6 @@ def load_and_prepare(
         ccdi["patientId"] = ccdi["patientId"].astype(str).str.strip()
         mapping_series = ccdi.set_index("sampleId")["patientId"]
 
-    # Labels (patient-level if mapping provided)
     user_map = _parse_label_map_str(label_map)
     labels_enc, inv_map = _build_binary_labels_general(
         label_source=label_source,
@@ -440,26 +431,21 @@ def load_and_prepare(
         collapse_to_patient=True,
     )
 
-    # Per-modality matrices (aggregate to patientId if mapping is provided)
     omics_dict: Dict[str, pd.DataFrame] = {}
     for mi, mod in enumerate(modalities):
-        f = _find_omics_file(cbio_dir, mod)
+        f = _find_omics_file(rawData_dir, mod)
         df_raw = pd.read_csv(f, sep="\t")
 
         if mod == "mirna":
-            # Collapse duplicate miRNA variants to one row per base symbol
-            # (genes x samples orientation)
             genes_by_samples = _collapse_mirna_rows(df_raw)
         else:
-            # Standard path (genes x samples): remove entrez, index by symbol
             df_tmp = df_raw.drop(columns=[c for c in ["entrezGeneId"] if c in df_raw.columns], errors="ignore")
             if "hugoGeneSymbol" not in df_tmp.columns:
                 raise ValueError(f"Expected 'hugoGeneSymbol' in {f}")
             genes_by_samples = df_tmp.set_index("hugoGeneSymbol")
 
-        # Convert to (samples x genes)
         df = genes_by_samples.T
-        df.index = df.index.astype(str).str.strip()  # sampleId
+        df.index = df.index.astype(str).str.strip()
         df.columns.name = None
 
         if mapping_series is not None:
@@ -471,15 +457,12 @@ def load_and_prepare(
             df = df2.groupby("patientId").aggregate("median")
             df.index.name = "patientId"
         else:
-            # require patient-indexed features if no mapping and labels are patient-based
             if label_source == "patients":
-                # try to coerce TARGET-xx-xxxx-01 -> TARGET-xx-xxxx
                 df.index = df.index.astype(str).str.replace(r"-\d+$", "", regex=True)
                 df.index.name = "patientId"
             else:
                 df.index.name = "sampleId"
 
-        # Align with labels (patientId)
         if df.index.name != "patientId":
             raise ValueError("To use patient-level labels with sample-indexed features, provide CCDI mapping.")
 
@@ -495,18 +478,17 @@ def load_and_prepare(
         df_filtered = feature_filter_scaler(
             df,
             labels_aligned,
-            var_threshold=0.01,
-            alpha=0.05,
+            var_threshold=var_threshold,
+            alpha=alpha,
             topFeature=top_k,
             standard=False,
             minimax=True,
-            mod_idx=mi,   
+            mod_idx=mi,
         )
         df_filtered = df_filtered.astype("float32")
         df_filtered.index.name = "patientId"
         omics_dict[mod] = df_filtered
 
-    # Align across modalities & labels (patientId)
     commons = set(labels_enc.index)
     for m in modalities:
         commons &= set(omics_dict[m].index)
@@ -514,14 +496,12 @@ def load_and_prepare(
     if not common_ids:
         raise ValueError(f"[{cancer_type}] After processing, no common patientIds across all modalities and labels.")
 
-    # Build patient-level clinical table restricted to common_ids
     clinical_filtered_df = _build_clinical_filtered(clin_pat, clin_sam, common_ids)
 
     for mod in modalities:
         omics_dict[mod] = omics_dict[mod].loc[common_ids]
     labels_final = labels_enc.loc[common_ids]
-    
-    # Split
+
     tr_ids, te_ids = train_test_split(
         common_ids,
         test_size=test_size,
@@ -532,10 +512,13 @@ def load_and_prepare(
     X_te_dict = {m: omics_dict[m].loc[te_ids] for m in modalities}
     y_tr = labels_final.loc[tr_ids]
     y_te = labels_final.loc[te_ids]
+    clinical_tr = clinical_filtered_df.loc[clinical_filtered_df["patientId"].isin(tr_ids)]
+    clinical_te = clinical_filtered_df.loc[clinical_filtered_df["patientId"].isin(te_ids)]
 
     return (
         X_tr_dict, X_te_dict, y_tr, y_te,
-        tr_ids, te_ids, inv_map, omics_dict, clinical_filtered_df
+        tr_ids, te_ids, inv_map, omics_dict, clinical_filtered_df,
+        clinical_tr, clinical_te
     )
 
 # ==========================
@@ -547,103 +530,141 @@ def _load_cfg() -> dict:
     with open(cfg_path, "r") as f:
         return yaml.safe_load(f) or {}
 
+
+def _normalize_study_map(study_map_raw: dict) -> Dict[str, List[str]]:
+    out: Dict[str, List[str]] = {}
+    for ct, v in (study_map_raw or {}).items():
+        if v is None:
+            out[ct] = []
+        elif isinstance(v, str):
+            out[ct] = [v]
+        elif isinstance(v, list):
+            out[ct] = [str(x) for x in v]
+        else:
+            out[ct] = []
+    return out
+
+
+def _studies_for_ct(ct: str, c_map: Dict[str, List[str]], p_map: Dict[str, List[str]]) -> List[Tuple[str, str]]:
+    """
+    Returns list of (portal, study_id) for a given cancer type.
+    portal in {"cbio", "pedcbio"}.
+    """
+    out: List[Tuple[str, str]] = []
+    for sid in c_map.get(ct, []):
+        out.append(("cbio", sid))
+    for sid in p_map.get(ct, []):
+        out.append(("pedcbio", sid))
+    return out
+
+
 def data_process():
     """
-    Read CONFIG_PATH and run preprocessing for each cancer type:
-      - cbio_dir: data/fetch/cbioportal_api_request/<CancerType>
-      - ccdi_map: data/fetch/ccdi_api_request/sample_ids/<ct>.csv
-      - modalities: from config.expression_profiles[ct]
-      - labels: from config.processor.labels[ct]
-    Writes filtered features + splits to data/gdm/filtered/<ct>/
+    Read config and run preprocessing per (portal, study_id) under:
+      rawData_dir: data/fetch/cbioportal_api_request/<portal>/<ct_slug>/<study_id>
+      outputs   : data/gdm/filtered/<portal>/<ct_slug>/<study_id>/
     """
     cfg = _load_cfg()
     ct_list = cfg.get("cancer_type_interest", [])
+    c_map = _normalize_study_map(cfg.get("cBio_studyId", {}))
+    p_map = _normalize_study_map(cfg.get("pedcBio_studyId", {}))
     expr = cfg.get("expression_profiles", {})
     labels_cfg = (cfg.get("processor", {}) or {}).get("labels", {})
+
+    fetch_root = Path("data/fetch/cbioportal_api_request")
     mapping_root = Path("data/fetch/ccdi_api_request/sample_ids")
-    cbio_root = Path("data/fetch/cbioportal_api_request")
 
     for ct in ct_list:
-        ct_slug = ct.replace(" ", "_")
-        cbio_dir = cbio_root / ct_slug
-        if not cbio_dir.exists():
-            print(f"[processor] SKIP {ct}: {cbio_dir} not found (run data_extract first).")
+        ct_slug = ct.replace(" ", "_").lower()
+        studies = _studies_for_ct(ct, c_map, p_map)
+        if not studies:
+            print(f"[processor] SKIP {ct}: no studies configured.")
             continue
 
-        # modalities (normalize microrna→mirna)
-        raw_mods = [m.lower() for m in expr.get(ct, [])]
+        # CCDI mapping is per cancer type (shared across studies)
+        ccdi_csv = None
+        ccdi_path = mapping_root / f"{ct_slug}.csv"
+        if ccdi_path.exists():
+            ccdi_csv = ccdi_path
+
+        # modalities (normalize microrna->mirna)
+        raw_mods = [m.lower() for m in (expr.get(ct, []) or [])]
         syn = {"microrna": "mirna"}
         modalities = [syn.get(m, m) for m in raw_mods if m in {"mrna","mirna","methylation"}]
         if not modalities:
             print(f"[processor] SKIP {ct}: no valid modalities configured.")
             continue
 
-        # labels
+        # labels config
         lc = labels_cfg.get(ct, {})
         label_source = lc.get("source", "samples")
-        label_column = lc.get("column", "HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR")
+        label_column = lc.get("column", None)
         label_map = lc.get("map", None)
-        var_threshold = lc.get("var_threshold", [0.005, 0.001, 0.01])  # float or [floats]
-        alpha         = lc.get("alpha", [0.05, 0.1, 0.05])          # float or [floats]
-        top_k         = lc.get("top_k", [500, 200, 500])           # int   or [ints]
-        test_size     = float(lc.get("test_size", 0.2))
-        seed          = int(lc.get("seed", 42))
+        var_threshold = lc.get("var_threshold", 0.01)
+        alpha = lc.get("alpha", 0.05)
+        top_k = lc.get("top_k", 500)
+        test_size = float(lc.get("test_size", 0.2))
+        seed = int(lc.get("seed", 42))
 
-        # CCDI mapping
-        ccdi_csv = None
-        ccdi_path = mapping_root / f"{ct_slug.lower()}.csv"
-        if ccdi_path.exists():
-            ccdi_csv = ccdi_path
+        for portal, study_id in studies:
+            rawData_dir = fetch_root / portal / ct_slug / study_id
+            if not rawData_dir.exists():
+                print(f"[processor] SKIP {ct} [{portal}:{study_id}]: {rawData_dir} not found (run extractor first).")
+                continue
 
-        print(f"[processor] {ct}: mods={modalities} label={label_source}:{label_column} top_k={top_k}")
+            print(f"[processor] {ct} [{portal}:{study_id}]: mods={modalities} label={label_source}:{label_column} top_k={top_k}")
 
-        X_tr, X_te, y_tr, y_te, tr_ids, te_ids, inv_map, omics_dict, clinical_filtered_df = load_and_prepare(
-            cbio_dir=cbio_dir,
-            ccdi_csv=ccdi_csv,
-            cancer_type=ct,
-            modalities=modalities,
-            label_source=label_source,
-            label_column=label_column,
-            top_k=top_k,
-            test_size=test_size,
-            random_state=seed,
-            label_map=label_map,
-            var_threshold=var_threshold,
-            alpha=alpha,        
-        )
+            (X_tr, X_te, y_tr, y_te, tr_ids, te_ids, inv_map,
+             omics_dict, clinical_filtered_df, clinical_tr, clinical_te) = load_and_prepare(
+                rawData_dir=rawData_dir,
+                ccdi_csv=ccdi_csv,
+                cancer_type=ct,
+                modalities=modalities,
+                label_source=label_source,
+                label_column=label_column,
+                top_k=top_k,
+                test_size=test_size,
+                random_state=seed,
+                label_map=label_map,
+                var_threshold=var_threshold,
+                alpha=alpha,
+            )
 
-        out_dir = Path("data/gdm/filtered") / ct_slug
-        out_dir.mkdir(parents=True, exist_ok=True)
+            out_dir = Path("data/gdm/filtered") / portal / ct_slug / study_id
+            out_dir.mkdir(parents=True, exist_ok=True)
 
-        # write clinical_filtered
-        if clinical_filtered_df is not None and not clinical_filtered_df.empty:
-            clinical_filtered_df.to_parquet(out_dir / "clinical_filtered.parquet", index=False)
-            clinical_filtered_df.to_csv(out_dir / "clinical_filtered.csv", index=False)
+            # write clinical subsets
+            if clinical_filtered_df is not None and not clinical_filtered_df.empty:
+                clinical_filtered_df.to_parquet(out_dir / "clinical_filtered.parquet", index=False)
+                clinical_filtered_df.to_csv(out_dir / "clinical_filtered.csv", index=False)
+                clinical_tr.to_parquet(out_dir / "clinical_train.parquet", index=False)
+                clinical_tr.to_csv(out_dir / "clinical_train.csv", index=False)
+                clinical_te.to_parquet(out_dir / "clinical_test.parquet", index=False)
+                clinical_te.to_csv(out_dir / "clinical_test.csv", index=False)
 
-        # write all (per-modality full filtered), then splits
-        for mod, df in omics_dict.items():
-            df.to_parquet(out_dir / f"{mod}.parquet")
-            df.to_csv(out_dir / f"{mod}_all.csv")
+            # write per-modality full filtered + splits
+            for mod, df in omics_dict.items():
+                df.to_parquet(out_dir / f"{mod}.parquet")
+                df.to_csv(out_dir / f"{mod}_all.csv")
 
-        for mod, df in X_tr.items():
-            df.to_parquet(out_dir / f"{mod}_train.parquet")
-            df.to_csv(out_dir / f"{mod}_train.csv")
+            for mod, df in X_tr.items():
+                df.to_parquet(out_dir / f"{mod}_train.parquet")
+                df.to_csv(out_dir / f"{mod}_train.csv")
 
-        for mod, df in X_te.items():
-            df.to_parquet(out_dir / f"{mod}_test.parquet")
-            df.to_csv(out_dir / f"{mod}_test.csv")
+            for mod, df in X_te.items():
+                df.to_parquet(out_dir / f"{mod}_test.parquet")
+                df.to_csv(out_dir / f"{mod}_test.csv")
 
-        y_tr.to_csv(out_dir / "labels_train.csv", header=True)
-        y_te.to_csv(out_dir / "labels_test.csv", header=True)
+            y_tr.to_csv(out_dir / "labels_train.csv", header=True)
+            y_te.to_csv(out_dir / "labels_test.csv", header=True)
 
-        print(f"[processor] {ct}: wrote {len(tr_ids)} train / {len(te_ids)} test to {out_dir}")
-        
+            print(f"[processor] {ct} [{portal}:{study_id}]: wrote {len(tr_ids)} train / {len(te_ids)} test -> {out_dir}")
 
 if __name__ == "__main__":
-    # keep your ad-hoc CLI for one-off runs, but most users will call data_process() via main.py
+    # Optional: keep CLI for ad-hoc runs by pointing directly to a rawData_dir
     import argparse
     p = argparse.ArgumentParser(description="Process bulk omics data and output feature matrices + labels.")
-    p.add_argument("--cbio-dir", type=str, required=True)
+    p.add_argument("--rawData-dir", type=str, required=True, help="Path like data/fetch/cbioportal_api_request/<portal>/<ct>/<study>")
     p.add_argument("--ccdi-csv", type=str, default=None)
     p.add_argument("--cancer-type", type=str, required=True)
     p.add_argument("--modalities", nargs="+", required=True)
@@ -655,11 +676,12 @@ if __name__ == "__main__":
     p.add_argument("--seed", type=int, default=42)
 
     args = p.parse_args()
-    cbio_dir = Path(args.cbio_dir)
+    rawData_dir = Path(args.rawData_dir)
     ccdi_csv = Path(args.ccdi_csv) if args.ccdi_csv else None
 
-    X_tr_dict, X_te_dict, y_tr, y_te, tr_ids, te_ids, inv_map, omics_dict, clinical_filtered_df = load_and_prepare(
-        cbio_dir=cbio_dir,
+    (X_tr_dict, X_te_dict, y_tr, y_te, tr_ids, te_ids, inv_map,
+     omics_dict, clinical_filtered_df, clinical_tr, clinical_te) = load_and_prepare(
+        rawData_dir=rawData_dir,
         ccdi_csv=ccdi_csv,
         cancer_type=args.cancer_type,
         modalities=args.modalities,
@@ -671,14 +693,16 @@ if __name__ == "__main__":
         label_map=args.label_map,
     )
 
-    print("Training samples:", len(tr_ids))
-    print("Testing samples:", len(te_ids))
-    out_dir = Path("data/gdm/filtered") / args.cancer_type.replace(" ", "_")
+    out_dir = Path("data/gdm/filtered") / rawData_dir.parts[-3] / rawData_dir.parts[-2] / rawData_dir.parts[-1]
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if clinical_filtered_df is not None and not clinical_filtered_df.empty:
         clinical_filtered_df.to_parquet(out_dir / "clinical_filtered.parquet", index=False)
         clinical_filtered_df.to_csv(out_dir / "clinical_filtered.csv", index=False)
+        clinical_tr.to_csv(out_dir / "clinical_train.csv", index=False)
+        clinical_tr.to_parquet(out_dir / "clinical_train.parquet", index=False)
+        clinical_te.to_csv(out_dir / "clinical_test.csv", index=False)
+        clinical_te.to_parquet(out_dir / "clinical_test.parquet", index=False)
 
     for mod, df in omics_dict.items():
         df.to_parquet(out_dir / f"{mod}.parquet")
@@ -691,3 +715,5 @@ if __name__ == "__main__":
         df.to_csv(out_dir / f"{mod}_test.csv")
     y_tr.to_csv(out_dir / "labels_train.csv", header=True)
     y_te.to_csv(out_dir / "labels_test.csv", header=True)
+
+    print(f"[processor CLI] wrote {len(tr_ids)} train / {len(te_ids)} test -> {out_dir}")

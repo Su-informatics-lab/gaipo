@@ -10,8 +10,8 @@ What it does
    - Samples: data/fetch/ccdi_api_request/sample_ids/<ct>.csv (optional; if missing,
                sample IDs are fetched per patient from cBioPortal)
 3) Fetches clinical tables via cBioPortal Swagger (bravado):
-   - Patient clinical  → pivot to one row per patientId
-   - Sample clinical   → pivot to one row per sampleId
+   - Patient clinical -> pivot to one row per patientId
+   - Sample clinical -> pivot to one row per sampleId
    Writes CSV mirrors and GDM clinical Parquets.
 4) Discovers molecular profiles in the study, then for each requested expression category
    (mrna, mirna, methylation, linear_cna) fetches molecular data via REST:
@@ -143,8 +143,8 @@ def _make_client(swagger_url: str, token: str | None):
         setattr(cli, name.replace(" ", "_").lower(), getattr(cli, name))
     return cli, http_client
 
-cbioportal,   cbio_http = _make_client(CBIO_SWAGGER, CBIO_TOKEN)      # token may be None (that's fine)
-pedcbioportal, ped_http = _make_client(PED_SWAGGER,  PED_TOKEN)       # token typically required
+cbioportal, cbio_http = _make_client(CBIO_SWAGGER, CBIO_TOKEN)      # token may be None (that's fine)
+pedcbioportal, ped_http = _make_client(PED_SWAGGER, PED_TOKEN)       # token typically required
 
 def _portal_env(portal: str):
     if portal == "cbio":
@@ -262,9 +262,9 @@ def fetch_patient_clinical(client, study_id: str, patient_ids: list[str]) -> tup
                 ok_patients.add(pid)
             for mdl in (out or []):
                 recs.append({
-                    "patientId":            getattr(mdl, "patientId", None),
-                    "clinicalAttributeId":  getattr(mdl, "clinicalAttributeId", None),
-                    "value":                getattr(mdl, "value", None),
+                    "patientId": getattr(mdl, "patientId", None),
+                    "clinicalAttributeId": getattr(mdl, "clinicalAttributeId", None),
+                    "value": getattr(mdl, "value", None),
                 })
         except BravadoHTTPError as e:
             if e.response.status_code in (404, 500):
@@ -317,9 +317,9 @@ def fetch_sample_clinical(client, study_id: str, sample_ids: list[str]) -> pd.Da
             ).result()
             for mdl in (out or []):
                 recs.append({
-                    "sampleId":            getattr(mdl, "sampleId", None),
+                    "sampleId": getattr(mdl, "sampleId", None),
                     "clinicalAttributeId": getattr(mdl, "clinicalAttributeId", None),
-                    "value":               getattr(mdl, "value", None),
+                    "value": getattr(mdl, "value", None),
                 })
         except BravadoHTTPError as e:
             if e.response.status_code in (404, 500):
@@ -356,9 +356,9 @@ def _discover_expression_profiles(api_base: str, headers: dict, study_id: str, c
     norm_cats = [syn.get((c or "").lower(), (c or "").lower()) for c in categories]
 
     catmap = {
-        "mrna":        {"alter_types": {"MRNA_EXPRESSION"},        "name_keys": ["mrna", "rna seq", "rna-seq", "rna_seq", "rna expression"]},
-        "mirna":       {"alter_types": {"MIRNA_EXPRESSION"},       "name_keys": ["mirna", "microrna"]},
-        "methylation": {"alter_types": {"METHYLATION"},            "name_keys": ["methyl"]},
+        "mrna": {"alter_types": {"MRNA_EXPRESSION"}, "name_keys": ["mrna", "rna seq", "rna-seq", "rna_seq", "rna expression"]},
+        "mirna": {"alter_types": {"MIRNA_EXPRESSION"}, "name_keys": ["mirna", "microrna"]},
+        "methylation": {"alter_types": {"METHYLATION"}, "name_keys": ["methyl"]},
         "linear_cna":  {"alter_types": {"COPY_NUMBER_ALTERATION"}, "name_keys": ["gistic", "cna linear", "linear cna"]},
     }
 
@@ -394,12 +394,12 @@ def fetch_profile_data(api_base: str, headers: dict, profile_id: str, sample_ids
         gene = rec.get("gene") or {}
         records.append({
             "molecularProfileId": rec.get("molecularProfileId"),
-            "hugoGeneSymbol":     gene.get("hugoGeneSymbol"),
-            "entrezGeneId":       rec.get("entrezGeneId"),
-            "sampleId":           rec.get("sampleId"),
-            "patientId":          rec.get("patientId"),
-            "studyId":            rec.get("studyId"),
-            "value":              rec.get("value"),
+            "hugoGeneSymbol": gene.get("hugoGeneSymbol"),
+            "entrezGeneId": rec.get("entrezGeneId"),
+            "sampleId": rec.get("sampleId"),
+            "patientId": rec.get("patientId"),
+            "studyId": rec.get("studyId"),
+            "value": rec.get("value"),
         })
     df = pd.DataFrame.from_records(records)
     return df.drop_duplicates(subset=["molecularProfileId","hugoGeneSymbol","entrezGeneId","sampleId"])

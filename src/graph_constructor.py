@@ -126,7 +126,6 @@ class MOGONETGraphParams:
 # ==========================
 # Core helpers
 # ==========================
-
 def _ensure_samples_by_features(X: ArrayLike) -> Tuple[np.ndarray, Optional[Sequence[str]]]:
     """Ensure X is (n_samples, n_features). If DataFrame, rows are samples; return (array, index_labels)."""
     if isinstance(X, pd.DataFrame):
@@ -136,18 +135,14 @@ def _ensure_samples_by_features(X: ArrayLike) -> Tuple[np.ndarray, Optional[Sequ
         raise ValueError("X must be 2D")
     return X, None
 
-
 def _cosine_dist(X: np.ndarray, Y: Optional[np.ndarray] = None) -> np.ndarray:
     return pairwise_distances(X, Y=Y, metric="cosine")
-
 
 def _similarity(D: np.ndarray) -> np.ndarray:
     return 1.0 - D
 
-
 def _sym_max(A: sp.csr_matrix) -> sp.csr_matrix:
     return A.maximum(A.T)
-
 
 def _row_norm(A: sp.csr_matrix) -> sp.csr_matrix:
     d = np.asarray(A.sum(axis=1)).ravel()
@@ -173,11 +168,35 @@ def _normalize_modalities(mods):
     syn = {"microrna": "mirna"}
     return [syn.get(m.lower(), m.lower()) for m in (mods or [])]
 
+def _normalize_study_map(study_map_raw: dict) -> Dict[str, List[str]]:
+    out: Dict[str, List[str]] = {}
+    for ct, v in (study_map_raw or {}).items():
+        if v is None:
+            out[ct] = []
+        elif isinstance(v, str):
+            out[ct] = [v]
+        elif isinstance(v, list):
+            out[ct] = [str(x) for x in v]
+        else:
+            out[ct] = []
+    return out
+
+def _studies_for_ct(ct: str, c_map: Dict[str, List[str]], p_map: Dict[str, List[str]]) -> List[Tuple[str, str]]:
+    """
+    Returns list of (portal, study_id) for a given cancer type.
+    portal in {"cbio", "pedcbio"}.
+    """
+    out: List[Tuple[str, str]] = []
+    for sid in c_map.get(ct, []):
+        out.append(("cbio", sid))
+    for sid in p_map.get(ct, []):
+        out.append(("pedcbio", sid))
+    return out
+
 
 # ==========================
 # MOGONET-style threshold & graphs
 # ==========================
-
 def compute_adaptive_radius_parameter_mogonet(X_tr: ArrayLike, params: MOGONETGraphParams = MOGONETGraphParams()) -> float:
     Xtr, _ = _ensure_samples_by_features(X_tr)
     n = Xtr.shape[0]
@@ -187,7 +206,6 @@ def compute_adaptive_radius_parameter_mogonet(X_tr: ArrayLike, params: MOGONETGr
     flat = np.sort(D.reshape(-1))
     idx = int(np.clip(params.edges_per_node * n, 0, flat.size - 1))
     return float(flat[idx])
-
 
 def build_train_adjacency_mogonet(
     X_tr: ArrayLike,
@@ -210,7 +228,6 @@ def build_train_adjacency_mogonet(
     A = sp.csr_matrix((data, (r, c)), shape=(n, n))
 
     return _postprocess(A, params.include_self_loops, params.row_normalize)
-
 
 def build_trte_block_adjacency_mogonet(
     X_tr: ArrayLike,
@@ -241,11 +258,9 @@ def build_trte_block_adjacency_mogonet(
 
     return _postprocess(A_block, params.include_self_loops, params.row_normalize)
 
-
 # ==========================
 # Torch / PyG conversions
 # ==========================
-
 def csr_to_torch_coo(A: sp.csr_matrix, device: Optional[str] = None):
     if torch is None:
         raise ImportError("torch is not available. Install PyTorch to use csr_to_torch_coo().")
@@ -255,7 +270,6 @@ def csr_to_torch_coo(A: sp.csr_matrix, device: Optional[str] = None):
     v = torch.as_tensor(coo.data, dtype=torch.float32, device=device)
     return torch.sparse_coo_tensor(i, v, size=coo.shape, device=device)
 
-
 def csr_to_edge_index(A: sp.csr_matrix):
     coo = A.tocoo()
     return np.vstack([coo.row, coo.col]), coo.data
@@ -264,7 +278,6 @@ def csr_to_edge_index(A: sp.csr_matrix):
 # ==========================
 # NetworkX conversions
 # ==========================
-
 def csr_to_networkx(
     A: sp.csr_matrix,
     node_ids: Optional[Sequence[str]] = None,
@@ -292,13 +305,11 @@ def csr_to_networkx(
 # ==========================
 # I/O helpers
 # ==========================
-
 def save_adjacency_npz(A: sp.csr_matrix, out_path: Union[str, Path]) -> Path:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     sp.save_npz(out_path, A.tocsr())
     return out_path
-
 
 def save_graph_graphml(G, out_path: Union[str, Path]) -> Path:
     import networkx as nx
@@ -306,7 +317,6 @@ def save_graph_graphml(G, out_path: Union[str, Path]) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     nx.write_graphml(G, out_path)
     return out_path
-
 
 def _load_matrix(path: str, fmt: str) -> pd.DataFrame:
     fmt = fmt.lower()
@@ -319,17 +329,20 @@ def _load_matrix(path: str, fmt: str) -> pd.DataFrame:
     else:
         raise ValueError("Unsupported format. Choose from: parquet, csv, tsv.")
 
+
+# ==========================
+# Main: portal + study aware
+# ==========================
 def graph_construct():
     """
     Build MOGONET-style patient-similarity graphs from preprocessed matrices.
 
-    Reads:
-      data/gdm/filtered/<Cancer_Type>/<mod>_train.parquet
-      data/gdm/filtered/<Cancer_Type>/<mod>_test.parquet
+    Reads (per portal/study):
+      data/gdm/filtered/<portal>/<Cancer_Type>/<study_id>/{mrna|mirna|methylation}_{train|test}.parquet
 
     Writes:
-      data/gdm/graphs/<Cancer_Type>/<mod>_train.adj.npz
-      data/gdm/graphs/<Cancer_Type>/<mod>_trte_block.adj.npz
+      data/gdm/graphs/<portal>/<Cancer_Type>/<study_id>/{mod}_train.adj.npz
+      data/gdm/graphs/<portal>/<Cancer_Type>/<study_id>/{mod}_trte_block.adj.npz
       (optional) .graphml if enabled in config.graph.save_graphml
     """
     cfg = _load_cfg()
@@ -339,6 +352,10 @@ def graph_construct():
     graph_cfg = (cfg.get("graph", {}) or {})
     edges_per_node = int(graph_cfg.get("edges_per_node", 15))
     save_graphml = bool(graph_cfg.get("save_graphml", False))
+
+    # study maps
+    c_map = _normalize_study_map(cfg.get("cBio_studyId", {}))
+    p_map = _normalize_study_map(cfg.get("pedcBio_studyId", {}))
 
     filtered_root = Path("data/gdm/filtered")
     graphs_root = Path("data/gdm/graphs")
@@ -350,70 +367,74 @@ def graph_construct():
         return
 
     for ct in ct_list:
-        ct_slug = ct.replace(" ", "_")
-        ct_filtered = filtered_root / ct_slug
-        if not ct_filtered.exists():
-            print(f"[graph] SKIP {ct}: {ct_filtered} not found (run process step first).")
+        ct_slug = ct.replace(" ", "_").lower()
+        studies = _studies_for_ct(ct, c_map, p_map)
+        if not studies:
+            print(f"[graph] SKIP {ct}: no studies configured.")
             continue
 
-        # modalities configured for this cancer type (normalize)
+        # modalities configured for this cancer type (normalize, keep bulk only)
         modalities = _normalize_modalities(expr.get(ct, []))
-        # keep only bulk modalities we can build graphs for
         modalities = [m for m in modalities if m in {"mrna", "mirna", "methylation"}]
         if not modalities:
             print(f"[graph] SKIP {ct}: no valid bulk modalities configured.")
             continue
 
-        out_dir = graphs_root / ct_slug
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        for mod in modalities:
-            tr_pq = ct_filtered / f"{mod}_train.parquet"
-            te_pq = ct_filtered / f"{mod}_test.parquet"
-
-            if not tr_pq.exists() or not te_pq.exists():
-                print(f"[graph] SKIP {ct}/{mod}: missing {tr_pq.name} or {te_pq.name}.")
+        for portal, study_id in studies:
+            ct_filtered = filtered_root / portal / ct_slug / study_id
+            if not ct_filtered.exists():
+                print(f"[graph] SKIP {ct} [{portal}:{study_id}]: {ct_filtered} not found (run process step first).")
                 continue
 
-            # load matrices (rows = patients, cols = selected features)
-            df_tr = pd.read_parquet(tr_pq)
-            df_te = pd.read_parquet(te_pq)
+            out_dir = graphs_root / portal / ct_slug / study_id
+            out_dir.mkdir(parents=True, exist_ok=True)
 
-            # compute adaptive threshold on TRAIN, then build graphs
-            try:
-                radius = compute_adaptive_radius_parameter_mogonet(df_tr, params)
-                A_tr = build_train_adjacency_mogonet(df_tr, radius=radius, params=params)
-                A_trte = build_trte_block_adjacency_mogonet(df_tr, df_te, radius=radius, params=params)
-            except Exception as e:
-                print(f"[graph] ERROR {ct}/{mod}: {type(e).__name__}: {e}")
-                continue
+            for mod in modalities:
+                tr_pq = ct_filtered / f"{mod}_train.parquet"
+                te_pq = ct_filtered / f"{mod}_test.parquet"
 
-            # save adjacency
-            p_train = out_dir / f"{mod}_train.adj.npz"
-            p_trte  = out_dir / f"{mod}_trte_block.adj.npz"
-            save_adjacency_npz(A_tr, p_train)
-            save_adjacency_npz(A_trte, p_trte)
-            print(f"[graph] {ct}/{mod}: wrote {p_train.name}, {p_trte.name}")
+                if not tr_pq.exists() or not te_pq.exists():
+                    print(f"[graph] SKIP {ct} [{portal}:{study_id}] / {mod}: missing {tr_pq.name} or {te_pq.name}.")
+                    continue
 
-            # optional GraphML (for inspection)
-            if save_graphml:
+                # load matrices (rows = patients, cols = selected features)
+                df_tr = pd.read_parquet(tr_pq)
+                df_te = pd.read_parquet(te_pq)
+
+                # compute adaptive threshold on TRAIN, then build graphs
                 try:
-                    g_train = out_dir / f"{mod}_train.graphml"
-                    g_trte  = out_dir / f"{mod}_trte_block.graphml"
-                    G_tr = csr_to_networkx(A_tr, node_ids=list(map(str, df_tr.index)))
-                    save_graph_graphml(G_tr, g_train)
-                    G_trte = csr_to_networkx(A_trte, node_ids=(list(map(str, df_tr.index)) + list(map(str, df_te.index))))
-                    save_graph_graphml(G_trte, g_trte)
-                    print(f"[graph] {ct}/{mod}: wrote {g_train.name}, {g_trte.name}")
+                    radius = compute_adaptive_radius_parameter_mogonet(df_tr, params)
+                    A_tr = build_train_adjacency_mogonet(df_tr, radius=radius, params=params)
+                    A_trte = build_trte_block_adjacency_mogonet(df_tr, df_te, radius=radius, params=params)
                 except Exception as e:
-                    print(f"[graph] WARN {ct}/{mod}: GraphML export failed: {e}")
+                    print(f"[graph] ERROR {ct} [{portal}:{study_id}] / {mod}: {type(e).__name__}: {e}")
+                    continue
+
+                # save adjacency
+                p_train = out_dir / f"{mod}_train.adj.npz"
+                p_trte  = out_dir / f"{mod}_trte_block.adj.npz"
+                save_adjacency_npz(A_tr, p_train)
+                save_adjacency_npz(A_trte, p_trte)
+                print(f"[graph] {ct} [{portal}:{study_id}] / {mod}: wrote {p_train.name}, {p_trte.name}")
+
+                # optional GraphML (for inspection)
+                if save_graphml:
+                    try:
+                        g_train = out_dir / f"{mod}_train.graphml"
+                        g_trte  = out_dir / f"{mod}_trte_block.graphml"
+                        G_tr = csr_to_networkx(A_tr, node_ids=list(map(str, df_tr.index)))
+                        save_graph_graphml(G_tr, g_train)
+                        G_trte = csr_to_networkx(A_trte, node_ids=(list(map(str, df_tr.index)) + list(map(str, df_te.index))))
+                        save_graph_graphml(G_trte, g_trte)
+                        print(f"[graph] {ct} [{portal}:{study_id}] / {mod}: wrote {g_train.name}, {g_trte.name}")
+                    except Exception as e:
+                        print(f"[graph] WARN {ct} [{portal}:{study_id}] / {mod}: GraphML export failed: {e}")
+
 
 # ==========================
-# Minimal CLI
+# Minimal CLI (unchanged; operates on explicit files)
 # ==========================
-
 if __name__ == "__main__":
-
     p = argparse.ArgumentParser(description="MOGONET-style graph construction (bulk)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -425,7 +446,7 @@ if __name__ == "__main__":
     btr.add_argument("--out", type=str, required=True)
     btr.add_argument("--out-graphml", type=str, default=None, help="Optional: save NetworkX graph to this .graphml path")
 
-    # TRAIN + TRTE block (either full matrix + id lists OR separate train/test matrices)
+    # TRAIN + TRTE block
     bsp = sub.add_parser("bulk-split", help="Build TRAIN and TRTE adjacencies given train/test data")
     bsp.add_argument("--matrix", type=str, default=None, help="Path to FULL matrix (parquet/csv/tsv)")
     bsp.add_argument("--matrix-train", type=str, default=None, help="Path to TRAIN matrix (parquet/csv/tsv)")
@@ -454,15 +475,10 @@ if __name__ == "__main__":
 
     elif args.cmd == "bulk-split":
         params = MOGONETGraphParams(edges_per_node=args.edges_per_node)
-
         if args.matrix_train and args.matrix_test:
-            # Case 1: separate train/test matrices provided (recommended with processor outputs)
             df_tr = _load_matrix(args.matrix_train, args.format)
             df_te = _load_matrix(args.matrix_test, args.format)
-            tr_ids = list(map(str, df_tr.index))
-            te_ids = list(map(str, df_te.index))
         elif args.matrix and args.train_ids and args.test_ids:
-            # Case 2: one full matrix + explicit id files
             df_full = _load_matrix(args.matrix, args.format)
             with open(args.train_ids) as f:
                 tr_ids = [line.strip() for line in f if line.strip()]
@@ -475,9 +491,7 @@ if __name__ == "__main__":
             df_tr = df_full.loc[tr_ids]
             df_te = df_full.loc[te_ids]
         else:
-            raise ValueError(
-                "Provide either (--matrix-train & --matrix-test) OR (--matrix & --train-ids & --test-ids)."
-            )
+            raise ValueError("Provide either (--matrix-train & --matrix-test) OR (--matrix & --train-ids & --test-ids).")
 
         radius = compute_adaptive_radius_parameter_mogonet(df_tr, params)
         A_tr = build_train_adjacency_mogonet(df_tr, radius=radius, params=params)

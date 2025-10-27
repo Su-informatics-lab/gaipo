@@ -19,7 +19,7 @@ Goals
 
 Inputs & Dependencies
 ---------------------
-- Feature importance:
+- Feature importance: make feature selection use trained views (and load clinical), but ablate omics only.
     * X_tr_list: list of np.ndarrays (one per omics view) for TRAIN samples.
     * X_trte_list: list of np.ndarrays (train+test stacked).
     * trte_idx: dict {"tr": [...], "te": [...]} marking index boundaries.
@@ -90,6 +90,8 @@ from .graph_ai import (
     tensors_from_numpy_lists,
     test_epoch,
     load_model_bundle,
+)
+from .graph_constructor import(
     MOGONETGraphParams,
     compute_adaptive_radius_parameter_mogonet,
     build_train_adjacency_mogonet,
@@ -99,7 +101,6 @@ from .graph_ai import (
 # =============================================================================
 # Small config helpers
 # =============================================================================
-
 def _cfg() -> dict:
     cfg_path = os.getenv("CONFIG_PATH", "config/pipeline_config.yaml")
     with open(cfg_path, "r") as f:
@@ -111,6 +112,7 @@ def _slug(s: str) -> str:
 
 
 def _mods_for(ct: str, cfg: dict) -> List[str]:
+    """Legacy helper (kept for survival section)."""
     prof = (cfg.get("expression_profiles") or {}).get(ct, []) or []
     # normalize synonyms
     syn = {"microrna": "mirna"}
@@ -128,6 +130,41 @@ def _coerce_int_labels(y) -> np.ndarray:
         # map known string values
         m = {"0": 0, "1": 1, "false": 0, "true": 1}
         return s.astype(str).str.lower().map(m).astype(int).to_numpy()
+
+
+def _study_map_from_cfg(cfg: dict) -> Dict[str, Dict[str, List[str]]]:
+    """
+    Returns a normalized mapping:
+      { 'cbio': {'Wilms Tumor': ['wt_target_2018_pub', ...], ...},
+        'pedcbio': {'Glioma': ['pbta_all', ...], ...} }
+    Supports both the new cfg.study_ids.{cbio|pedcbio} and legacy keys.
+    """
+    out = {"cbio": {}, "pedcbio": {}}
+    study_ids = (cfg.get("study_ids") or {})
+    for portal in ("cbio", "pedcbio"):
+        m = study_ids.get(portal) or {}
+        for ct, val in (m.items() if isinstance(m, dict) else []):
+            out[portal][ct] = val if isinstance(val, list) else [val]
+
+    # legacy compatibility
+    legacy_cbio = cfg.get("cBio_studyId") or {}
+    legacy_ped = cfg.get("pedcBio_studyId") or {}
+    for ct, val in legacy_cbio.items():
+        out["cbio"].setdefault(ct, val if isinstance(val, list) else [val])
+    for ct, val in legacy_ped.items():
+        out["pedcbio"].setdefault(ct, val if isinstance(val, list) else [val])
+
+    return out
+    
+def _iter_studies(cfg: dict):
+    """
+    Yields (portal, cancer_type, study_id) for all configured studies.
+    """
+    m = _study_map_from_cfg(cfg)
+    for portal in ("cbio", "pedcbio"):
+        for ct, ids in m.get(portal, {}).items():
+            for sid in ids:
+                yield portal, ct, sid
 
 # =============================================================================
 # Survival analysis (KM)
@@ -201,44 +238,41 @@ def run_km_survival():
     time_col  = pa.get("time_col", "OS_MONTHS")
     status_c  = pa.get("status_col", "OS_STATUS")
     title     = pa.get("title", "Survival")
-    out_dir   = Path(pa.get("out_dir", "data/analysis/km"))
+    out_root  = Path(pa.get("out_dir", "data/analysis/km"))
 
     if not group_col:
         print("[post] KM survival requires 'group_col' in config.post_analysis.survival.")
         return
 
-    cts = cfg.get("cancer_type_interest", [])
-    for ct in cts:
+    # iterate per study (portal/ct/study_id)
+    for portal, ct, study_id in _iter_studies(cfg):
         ct_slug = _slug(ct)
-
-        # 1) Prefer filtered clinical (restricted to used patients)
-        filt_dir = Path("data/gdm/filtered") / ct_slug
-        cand = [filt_dir / "clinical_filtered.parquet", filt_dir / "clinical_filtered.csv"]
+        filt_dir = Path("data/gdm/filtered") / portal / ct_slug / study_id
 
         pat = None
-        for p in cand:
-            if p.exists():
-                pat = pd.read_parquet(p) if p.suffix == ".parquet" else pd.read_csv(p)
+        # Prefer filtered clinical for the exact split
+        for cand in (filt_dir / "clinical_filtered.parquet", filt_dir / "clinical_filtered.csv"):
+            if cand.exists():
+                pat = pd.read_parquet(cand) if cand.suffix == ".parquet" else pd.read_csv(cand)
                 break
 
-        # 2) Fallback to original cBio patients
+        # Fallbacks if needed (portal-aware)
         if pat is None:
-            pat_csv = Path("data/cbioportal_api_request") / ct_slug / "clinical_patients.csv"
-            if pat_csv.exists():
-                pat = pd.read_csv(pat_csv)
+            cbio_pat = Path("data/fetch/cbioportal_api_request") / portal / ct_slug / study_id / "clinical_patients.csv"
+            if cbio_pat.exists():
+                pat = pd.read_csv(cbio_pat)
             else:
                 gdm_sub = Path("data/gdm/clinical/clinical_subjects.parquet")
                 if not gdm_sub.exists():
-                    print(f"[post] No clinical table for {ct}; skipping.")
+                    print(f"[post] No clinical table for {portal}/{ct}/{study_id}; skipping.")
                     continue
                 pat = pd.read_parquet(gdm_sub)
 
-        # Now proceed with configured columns
         if time_col not in pat.columns:
-            print(f"[post] {ct}: time_col '{time_col}' not found; skipping.")
+            print(f"[post] {portal}/{ct}/{study_id}: time_col '{time_col}' not found; skipping.")
             continue
         if group_col not in pat.columns:
-            print(f"[post] {ct}: group_col '{group_col}' not found; skipping.")
+            print(f"[post] {portal}/{ct}/{study_id}: group_col '{group_col}' not found; skipping.")
             continue
 
         df = pat.copy()
@@ -246,36 +280,74 @@ def run_km_survival():
         ix = df[time_col].notna() & df["__status_bin"].notna()
         df = df.loc[ix, [group_col, time_col, "__status_bin"]].copy()
         if df.empty:
-            print(f"[post] {ct}: no rows with survival info; skipping.")
+            print(f"[post] {portal}/{ct}/{study_id}: no rows with survival info; skipping.")
             continue
 
-        out_png = out_dir / f"{ct_slug}_km.png"
-        plot_km_curves(df, group_col, time_col, "__status_bin", str(out_png), f"{title} — {ct}")
+        out_png = out_root / portal / ct_slug / study_id / f"km.png"
+        plot_km_curves(df, group_col, time_col, "__status_bin", str(out_png), f"{title} — {ct} [{study_id}]")
+
 
 # =============================================================================
 # Feature-importance ablation (feature selection per-modality)
 # =============================================================================
 
-def _load_proc_for_ct(ct: str, mods: Sequence[str]):
+def _study_for_ct(cfg: dict, ct: str) -> Tuple[str, str]:
     """
-    Load processed train/test feature matrices + labels for a cancer type.
-    Ensures numeric, aligned sample order across modalities, and matches labels.
+    Resolve (portal, study_id) for a cancer type using config maps.
+    Priority: cBio_studyId -> pedcBio_studyId. If not found, try to discover on disk.
     """
-    root = Path("data/gdm/filtered") / _slug(ct)
+    maps = [
+        ("cBio_studyId", "cbio"),
+        ("pedcBio_studyId", "pedcbio"),
+    ]
+    for key, portal in maps:
+        sid_map = cfg.get(key) or {}
+        if ct in sid_map:
+            return portal, sid_map[ct]
+
+    # Fallback: discover any existing processed directory
+    ct_slug = _slug(ct)
+    base = Path("data/gdm/filtered")
+    for portal in ("cbio", "pedcbio"):
+        p = base / portal / ct_slug
+        if p.exists():
+            # pick the first subfolder as study_id
+            for child in sorted(p.iterdir()):
+                if child.is_dir():
+                    return portal, child.name
+    # Last resort
+    return "cbio", "unknown_study"
+
+
+def _load_proc_for_study(portal: str, ct: str, study_id: str, mods: Sequence[str]):
+    """
+    Load processed train/test feature matrices + labels for a cancer type/study/portal.
+    Supports any view in 'mods', including 'clinical'.
+    """
+    root = Path("data/gdm/filtered") / portal / _slug(ct) / study_id
     X_tr, X_te = {}, {}
+
     for m in mods:
         p_tr = root / f"{m}_train.parquet"
         p_te = root / f"{m}_test.parquet"
         if not p_tr.exists() or not p_te.exists():
-            raise FileNotFoundError(f"[post] Missing {p_tr} or {p_te}. Run 'process' first for {ct}/{m}.")
+            raise FileNotFoundError(
+                f"[post] Missing {p_tr} or {p_te}. "
+                f"If '{m}' was used during training (meta['views']), it must exist for post-analysis. "
+                f"Re-run processor/graph_ai to materialize {m} matrices at {root}."
+            )
         X_tr[m] = pd.read_parquet(p_tr)
         X_te[m] = pd.read_parquet(p_te)
 
     # labels
-    y_tr = pd.read_csv(root / "labels_train.csv", index_col=0, header=None).iloc[:, 0]
-    y_te = pd.read_csv(root / "labels_test.csv", index_col=0, header=None).iloc[:, 0]
+    lt = root / "labels_train.csv"
+    le = root / "labels_test.csv"
+    if not lt.exists() or not le.exists():
+        raise FileNotFoundError(f"[post] Missing labels CSVs at {root}.")
+    y_tr = pd.read_csv(lt, index_col=0, header=None).iloc[:, 0]
+    y_te = pd.read_csv(le, index_col=0, header=None).iloc[:, 0]
 
-    # choose a reference view and align sample order (rows)
+    # align all views to label indices using the first trained view as reference
     ref = mods[0]
     X_tr[ref] = X_tr[ref].loc[y_tr.index.intersection(X_tr[ref].index)]
     X_te[ref] = X_te[ref].loc[y_te.index.intersection(X_te[ref].index)]
@@ -285,12 +357,18 @@ def _load_proc_for_ct(ct: str, mods: Sequence[str]):
         X_tr[m] = X_tr[m].loc[y_tr.index]
         X_te[m] = X_te[m].loc[y_te.index]
 
-    # ensure numeric dtypes
+    # ensure numeric dtypes across all views (clinical included)
     for m in mods:
-        X_tr[m] = X_tr[m].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0)
-        X_te[m] = X_te[m].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        X_tr[m] = (
+            X_tr[m].apply(pd.to_numeric, errors="coerce")
+                   .replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        )
+        X_te[m] = (
+            X_te[m].apply(pd.to_numeric, errors="coerce")
+                   .replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        )
 
-    return X_tr, X_te, y_tr, y_te
+    return X_tr, X_te, y_tr, y_te, root
 
 
 def _expected_in_dims(model_dict, num_view: int):
@@ -391,26 +469,30 @@ def _baseline_probs(
     edges_per_node: int,
     meta: Dict
 ):
+    """
+    Align frames to training feature set and produce baseline TRTE probabilities
+    using the exact trained views (including 'clinical' if present).
+    Returns: prob, te_idx, X_tr_aln, X_te_aln, params
+    """
     # align features to training feature set
-    X_tr, X_te = _align_to_meta_features(X_tr, X_te, mods, meta)
+    X_tr_aln, X_te_aln = _align_to_meta_features(X_tr, X_te, mods, meta)
     # check dims against encoders
-    _validate_dims_against_model(model_dict, mods, X_tr)
+    _validate_dims_against_model(model_dict, mods, X_tr_aln)
 
     params = MOGONETGraphParams(edges_per_node=edges_per_node)
-    X_tr_list, X_trte_list, A_trte_list = [], [], []
+    X_trte_list, A_trte_list = [], []
     for m in mods:
-        Xtr = X_tr[m].to_numpy(dtype=np.float32)
-        Xte = X_te[m].to_numpy(dtype=np.float32)
+        Xtr = X_tr_aln[m].to_numpy(dtype=np.float32)
+        Xte = X_te_aln[m].to_numpy(dtype=np.float32)
         radius = compute_adaptive_radius_parameter_mogonet(Xtr, params)
         A_trte = build_trte_block_adjacency_mogonet(Xtr, Xte, radius=radius, params=params)
-        X_tr_list.append(Xtr)
         X_trte_list.append(np.vstack([Xtr, Xte]))
         A_trte_list.append(A_trte)
 
     data_trte, adj_trte = tensors_from_numpy_lists(X_trte_list, A_trte_list, device="cpu")
-    te_idx = list(range(len(X_tr[mods[0]]), len(X_tr[mods[0]]) + len(X_te[mods[0]])))
+    te_idx = list(range(len(X_tr_aln[mods[0]]), len(X_tr_aln[mods[0]]) + len(X_te_aln[mods[0]])))
     prob = test_epoch(data_trte, adj_trte, te_idx, model_dict)
-    return prob, te_idx, X_tr, X_te
+    return prob, te_idx, X_tr_aln, X_te_aln, params
 
 
 def run_feature_selection():
@@ -421,40 +503,45 @@ def run_feature_selection():
         return
 
     edges_per_node = int(ab.get("edges_per_node", 5))
-    out_dir = Path(ab.get("out_dir", "data/analysis/feature_selection"))
+    out_root = Path(ab.get("out_dir", "data/analysis/feature_selection"))
 
     cts = cfg.get("cancer_type_interest", [])
     for ct in cts:
-        mods_cfg = _mods_for(ct, cfg)
-        if not mods_cfg:
-            print(f"[post] {ct}: no modalities configured for selection; skipping.")
-            continue
-
-        # load processed data + labels
-        X_tr, X_te, y_tr, y_te = _load_proc_for_ct(ct, mods_cfg)
-        y_true = _coerce_int_labels(y_te.values)
+        ct_slug = _slug(ct)
 
         # load trained model bundle + metadata
-        ckpt_dir = Path(cfg.get("model", {}).get("checkpoints_dir", "data/models")) / _slug(ct)
+        ckpt_dir = Path((cfg.get("model") or {}).get("checkpoints_dir", "data/models")) / ct_slug
         if not (ckpt_dir / "meta.json").exists():
             print(f"[post] {ct}: checkpoints not found at {ckpt_dir}; skipping selection.")
             continue
         model_dict, meta = load_model_bundle(ckpt_dir)
 
-        # ---- USE TRAINED VIEW ORDER ----
-        mods_trained = meta.get("views")
-        if not mods_trained:
+        # ---- USE TRAINED VIEW ORDER STRICTLY ----
+        trained_views = list(meta.get("views") or [])
+        if not trained_views:
             raise RuntimeError("Checkpoint meta.json missing 'views'. Retrain to save 'views' in meta.")
-        # reorder current frames to match the training order, then align columns to meta
-        X_tr, X_te = _reorder_to_trained_order(X_tr, X_te, mods_trained)
+        mods_to_load = trained_views
 
-        print("[post] Trained order:", mods_trained)
-        print("[post] Expected in-dims:", _expected_in_dims(model_dict, len(mods_trained)))
-        print("[post] Current in-dims:", [X_tr[m].shape[1] for m in mods_trained])
+        # Resolve (portal, study_id) for this cancer type (so we can find processed matrices)
+        portal, study_id = _study_for_ct(cfg, ct)
+        print(f"[post] {ct}: portal={portal} study_id={study_id} trained_views={mods_to_load}")
 
-        # baseline (also returns column-aligned frames)
-        base_prob, te_idx, X_tr, X_te = _baseline_probs(
-            model_dict, mods_trained, X_tr, X_te, edges_per_node, meta
+        # load processed data + labels using the trained view set
+        try:
+            X_tr, X_te, y_tr, y_te, filt_root = _load_proc_for_study(portal, ct, study_id, mods_to_load)
+        except FileNotFoundError as e:
+            print(str(e))
+            continue
+
+        y_true = _coerce_int_labels(y_te.values)
+
+        # ---- REORDER CURRENT FRAMES EXACTLY AS TRAINED (keys/iteration order) ----
+        X_tr, X_te = _reorder_to_trained_order(X_tr, X_te, mods_to_load)
+
+        print("[post] Trained order:", mods_to_load)
+        # baseline (all trained views) — ensures VCDN dims match
+        base_prob, te_idx, X_tr_aln, X_te_aln, params = _baseline_probs(
+            model_dict, mods_to_load, X_tr, X_te, edges_per_node, meta
         )
         base_pred = base_prob.argmax(1)
         base_f1  = f1_score(y_true, base_pred, average="macro")
@@ -467,28 +554,34 @@ def run_feature_selection():
                 pass
         print(f"[post] {ct}: baseline acc={base_acc:.4f}, f1={base_f1:.4f}{'' if base_auc is None else f', auc={base_auc:.4f}'}")
 
-        # ----- PRECOMPUTE TRTE BLOCKS FOR ALL VIEWS IN TRAINED ORDER (baseline, non-ablated) -----
-        params = MOGONETGraphParams(edges_per_node=edges_per_node)
+        # ----- PRECOMPUTE TRTE BLOCKS FOR ALL TRAINED VIEWS (baseline, non-ablated) -----
         base_X_trte = {}
         base_A_trte = {}
-        for m in mods_trained:
-            Xtr = X_tr[m].to_numpy(dtype=np.float32)
-            Xte = X_te[m].to_numpy(dtype=np.float32)
+        for m in mods_to_load:
+            Xtr = X_tr_aln[m].to_numpy(dtype=np.float32)
+            Xte = X_te_aln[m].to_numpy(dtype=np.float32)
             rad = compute_adaptive_radius_parameter_mogonet(Xtr, params)
             base_X_trte[m] = np.vstack([Xtr, Xte])
             base_A_trte[m] = build_trte_block_adjacency_mogonet(Xtr, Xte, radius=rad, params=params)
 
-        # ----- per-modality ablation (KEEP TRAINED ORDER) -----
-        for m in mods_trained:
+        # ----- per-modality ablation (KEEP TRAINED ORDER); omics only -----
+        OMICS = {"mrna", "mirna", "methylation"}
+        out_dir = out_root / portal / ct_slug / study_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        for m in mods_to_load:
+            if m not in OMICS:
+                print(f"[post] {portal}/{ct}/{study_id}/{m}: skip importance (non-omics).")
+                continue
+
             # aligned matrices
-            Xt = X_tr[m].to_numpy(dtype=np.float32)
-            Xe = X_te[m].to_numpy(dtype=np.float32)
+            Xt = X_tr_aln[m].to_numpy(dtype=np.float32)
+            Xe = X_te_aln[m].to_numpy(dtype=np.float32)
             V = Xt.shape[1]
             imps = np.zeros(V, dtype=float)
 
-            # for each feature j in THIS view m: ablate and only replace THIS slot while preserving order
             for j in range(V):
-                # ablate
+                # ablate one feature
                 Xtr_v = Xt.copy(); Xte_v = Xe.copy()
                 Xtr_v[:, j] = 0.0; Xte_v[:, j] = 0.0
                 rad_v = compute_adaptive_radius_parameter_mogonet(Xtr_v, params)
@@ -498,7 +591,7 @@ def run_feature_selection():
                 # assemble TRTE lists STRICTLY in trained order
                 X_trte_all = []
                 A_trte_all = []
-                for mm in mods_trained:
+                for mm in mods_to_load:
                     if mm == m:
                         X_trte_all.append(X_trte_v)
                         A_trte_all.append(A_trte_v)
@@ -512,17 +605,16 @@ def run_feature_selection():
                 f1 = f1_score(y_true, prob.argmax(1), average="macro")
                 imps[j] = float((base_f1 - f1) * V)
 
-            out_df = pd.DataFrame({"feature": X_tr[m].columns.astype(str), "delta_f1": imps})
+            out_df = pd.DataFrame({"feature": X_tr_aln[m].columns.astype(str), "delta_f1": imps})
             out_df.sort_values("delta_f1", ascending=False, inplace=True)
-            out_path = out_dir / _slug(ct) / f"{m}_selection.csv"
-            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / f"{m}_selection.csv"
             out_df.to_csv(out_path, index=False)
             print(f"[post] {ct}/{m}: wrote importance CSV -> {out_path}")
+
 
 # =============================================================================
 # Orchestrator
 # =============================================================================
-
 def run_post_analysis():
     """
     Decide which post tasks to run based on config.post_analysis.*
