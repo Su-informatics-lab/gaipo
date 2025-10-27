@@ -1,56 +1,125 @@
 # config/gdc_mapping.yaml
 
 # ---- Project & scope ----
-project_id: GAIPO                        
+project_id: GAIPO
 cancer_type_interest:
   - Wilms Tumor
   - Glioma
 
 # ---- Paths used by the pipeline ----
-schemas_dir: src/gdcdictionary/schemas        # used by build_data_model() / DataModel
-gdm_root:   data/gdm                          # output node/files/indexes Parquet root
+# (Your code already defaults to these; keeping them explicit is nice for clarity.)
+schemas_dir: src/gdcdictionary/schemas
+gdm_root:   data/gdm
 
-# 1) the rest of your mapping (unchanged; keep as-is)
+# ---- GDC mapping knobs used by src/data_model.py ----
 gdc_mapping:
+
+  # Map incoming disease labels (from cBio) to GDC disease_type enums
   disease_type_map:
     "Wilms Tumor": "Neoplasms, NOS"
     "Wilms' Tumor": "Neoplasms, NOS"
+    "Nephroblastoma": "Neoplasms, NOS"
     "Glioma": "Gliomas"
+    "Low Grade Glioma": "Gliomas"
+    "High Grade Glioma": "Gliomas"
+    "Glioblastoma": "Gliomas"
+
+  # Map cancer type labels to GDC primary_site enums
   primary_site_map:
     "Wilms Tumor": "Kidney"
+    "Wilms' Tumor": "Kidney"
+    "Nephroblastoma": "Kidney"
     "Glioma": "Brain"
+    "Low Grade Glioma": "Brain"
+    "High Grade Glioma": "Brain"
+    "Glioblastoma": "Brain"
+
+  # ICD-O-3 topography → primary_site
+  # (Cxxx codes should be uppercase with no punctuation.)
   icdo_topography_map:
     C649: "Kidney"
+    C659: "Kidney"
     C710: "Brain"
+    C711: "Brain"
+    C712: "Brain"
+    C713: "Brain"
+    C714: "Brain"
+    C715: "Brain"
+    C716: "Brain"
+    C717: "Brain"
+    C718: "Brain"
     C719: "Brain"
+
+  # ICD-O-3 morphology (first 4 digits) → primary_site fallback
   icdo_morph_to_site_map:
-    "8960": "Kidney"
-    "9380": "Brain"
-    "9400": "Brain"
+    "8960": "Kidney"   # Nephroblastoma
+    "9364": "Kidney"   # Nephroblastoma, cystic (alt codes seen sometimes)
+    "9380": "Brain"    # Glioma, malignant, NOS
+    "9400": "Brain"    # Astrocytoma, NOS
+    "9440": "Brain"    # Glioblastoma
+
+  # OncoTree code → primary_site
   oncotree_to_site:
-    WT: "Kidney"
+    WT:  "Kidney"
     LGG: "Brain"
     HGG: "Brain"
+    GBM: "Brain"
+    ASTR: "Brain"
+
+  # Sample suffix map (derived from sampleId: TARGET-XX-XXXXXX-**NN**)
+  # NOTE: do NOT include "sample_type" here; the GDC 'sample' node doesn’t have it.
+  # Only use fields you actually write in cbio_to_sample(): specimen_type, tissue_type, tumor_descriptor.
   sample_suffix_map:
-    "01": { specimen_type: "Solid Tissue", tissue_type: "Tumor", tumor_descriptor: "Primary", sample_type: "Primary Tumor" }
-    "02": { specimen_type: "Solid Tissue", tissue_type: "Tumor", tumor_descriptor: "Recurrence", sample_type: "Recurrent Tumor" }
-    "03": { specimen_type: "Solid Tissue", tissue_type: "Tumor",  tumor_descriptor: "Primary", sample_type: "Primary Tumor" }
-    "06": { specimen_type: "Solid Tissue", tissue_type: "Normal", tumor_descriptor: "Unknown", sample_type: "Solid Tissue Normal" }
-    "10": { specimen_type: "Peripheral Whole Blood", tissue_type: "Normal", tumor_descriptor: "Unknown", sample_type: "Blood Derived Normal" }
+    "01": { specimen_type: "Solid Tissue", tissue_type: "Tumor",  tumor_descriptor: "Primary" }
+    "02": { specimen_type: "Solid Tissue", tissue_type: "Tumor",  tumor_descriptor: "Recurrence" }
+    "03": { specimen_type: "Solid Tissue", issue_type: "Tumor",  tumor_descriptor: "Primary" }
+    "06": { specimen_type: "Solid Tissue", tissue_type: "Normal", tumor_descriptor: "Unknown" }
+    "10": { specimen_type: "Peripheral Whole Blood", tissue_type: "Normal", tumor_descriptor: "Unknown" }
+    "11": { specimen_type: "Bone Marrow", tissue_type: "Normal", tumor_descriptor: "Unknown" }
+    "12": { specimen_type: "Buccal Cell", tissue_type: "Normal", tumor_descriptor: "Unknown" }
+
+  # Preservation method normalization (keys are matched case-insensitively)
+  # Values must be valid 'sample.preservation_method' enums in your dictionary.
   preservation_map:
     ffpe: FFPE
-    formalin-fixed paraffin-embedded: FFPE
+    "formalin fixed paraffin embedded": FFPE
+    "formalin-fixed paraffin-embedded": FFPE
+    "formalin fixed": FFPE
     frozen: Frozen
     fresh_frozen: Frozen
-    fresh frozen: Frozen
+    "fresh frozen": Frozen
+    snap_frozen: Snap Frozen
+    "snap frozen": Snap Frozen
     fresh: Fresh
-    snap frozen: Snap Frozen
     cryopreserved: Cryopreserved
     edta: EDTA
     oct: OCT
+    "o.c.t.": OCT
   preservation_default: Unknown
 
-# 2) Output root override (rarely needed; your module computes these)
+# ---- Optional runtime knobs (safe to ignore by current code) ----
+# These don’t change behavior unless you add support later, but documenting them here
+# helps users understand what’s possible.
+build_nodes:
+  case: true
+  demographic: true
+  diagnosis: true
+  clinical: true
+  sample: true
+  file: true
+  # future toggles users can turn on if/when you add projections:
+  treatment: false
+  follow_up: false
+  family_history: false
+  exposure: false
+  aliquot: false
+  read_group: false
+  aligned_reads: false
+  rna_expression: false
+  mirna_expression: false
+  methylation_array: false
+
+# Output root override (informational; your module already computes these)
 output_roots:
   fetch_root: "data/fetch"
   gdm_root:   "data/gdm"
