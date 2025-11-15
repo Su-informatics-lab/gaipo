@@ -3,4 +3,4 @@
 ![Description](image/GAIPO.png)
 
 - GAIPO workflow for graph AI model implementation and development:
-![Description](image/GAIPO WORKFLOW.png)
+![Description](image/GAIPO_WORKFLOW.png)
