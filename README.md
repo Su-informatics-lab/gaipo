@@ -1,5 +1,9 @@
 # GAIPO
 * GAIPO: Graph Artificial Intelligence for Pediatric Oncology
+![Description](image/GAIPO.png)
+
+- GAIPO workflow for graph AI model implementation and development:
+![Description](image/GAIPO_WORKFLOW.png)
 
 ## Run each step
 ### Step 1: Fetch subject_ids / sample_ids
@@ -41,3 +45,4 @@ export COMPOSE_BAKE=true
 docker compose build
 docker compose run --rm app python -m src.main --all
 docker compose run --rm app python -m src.main --call data_fetch,data_extract
+
