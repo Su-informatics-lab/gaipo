@@ -1,0 +1,273 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "aligned_reads"
+title: Aligned Reads
+type: object
+namespace: https://gdc.cancer.gov
+category: data_file
+project: '*'
+program: '*'
+description: >-
+  Data file containing aligned reads that are generated internally by the GDC.
+additionalProperties: false
+submittable: false
+downloadable: true
+previous_version_downloadable: false
+validators: null
+
+systemProperties:
+  - id
+  - project_id
+  - created_datetime
+  - updated_datetime
+  - file_state
+  - state
+  - error_type
+
+links:
+  - exclusive: true
+    required: true
+    subgroup:
+      - name: alignment_cocleaning_workflows
+        backref: aligned_reads_files
+        label: data_from
+        target_type: alignment_cocleaning_workflow
+        multiplicity: many_to_one
+        required: false
+      - name: alignment_workflows
+        backref: aligned_reads_files
+        label: data_from
+        target_type: alignment_workflow
+        multiplicity: many_to_one
+        required: false
+  - exclusive: true
+    required: false
+    subgroup:
+      - name: submitted_unaligned_reads_files
+        backref: aligned_reads_files
+        label: matched_to
+        target_type: submitted_unaligned_reads
+        multiplicity: one_to_many
+        required: false
+      - name: submitted_aligned_reads_files
+        backref: aligned_reads_files
+        label: matched_to
+        target_type: submitted_aligned_reads
+        multiplicity: one_to_one
+        required: false
+
+required:
+  - submitter_id
+  - file_name
+  - file_size
+  - md5sum
+  - data_category
+  - data_format
+  - data_type
+  - experimental_strategy
+  - platform
+
+uniqueKeys:
+  - [id]
+  - [project_id, submitter_id]
+
+properties:
+
+  $ref:
+    - "_definitions.yaml#/data_file_properties"
+
+  average_base_quality:
+    $ref:
+      - "_terms.yaml#/average_base_quality/common"
+    type: number
+    minimum: 0
+
+  average_insert_size:
+    $ref:
+      - "_terms.yaml#/average_insert_size/common"
+    type: integer
+    minimum: 0
+
+  average_read_length:
+    $ref:
+      - "_terms.yaml#/average_read_length/common"
+    type: integer
+    minimum: 0
+
+  contamination:
+    $ref:
+      - "_terms.yaml#/contamination/common"
+    type: number
+    maximum: 1
+    minimum: 0
+
+  contamination_error:
+    $ref:
+      - "_terms.yaml#/contamination_error/common"
+    type: number
+    minimum: 0
+
+  data_category:
+    $ref:
+      - "_terms.yaml#/data_category/common"
+    enum:
+      - Sequencing Reads
+
+  data_format:
+    $ref:
+      - "_terms.yaml#/data_format/common"
+    enum:
+      - BAM
+
+  data_type:
+    $ref:
+      - "_terms.yaml#/data_type/common"
+    enum:
+      - Aligned Reads
+
+  experimental_strategy:
+    $ref:
+      - "_terms.yaml#/experimental_strategy/common"
+    enum:
+      - ATAC-Seq
+      - Bisulfite-Seq
+      - ChIP-Seq
+      - HiChIP
+      - m6A MeRIP-Seq
+      - miRNA-Seq
+      - RNA-Seq
+      - scATAC-Seq
+      - scRNA-Seq
+      - Targeted Sequencing
+      - Validation
+      - WGS
+      - WXS
+    enumDef:
+      Targeted Sequencing:
+        $ref:
+          - "_terms_enum.yaml#/targeted_sequencing/common"
+      WGS:
+        $ref:
+          - "_terms_enum.yaml#/wgs/common"
+      WXS:
+        $ref:
+          - "_terms_enum.yaml#/wxs/common"
+
+  mean_coverage:
+    $ref:
+      - "_terms.yaml#/mean_coverage/common"
+    type: number
+    minimum: 0
+
+  msi_score:
+    description: >-
+      Numeric score denoting the aligned reads file's MSI score from MSIsensor.
+    type: number
+    minimum: 0
+
+  msi_status:
+    description: >-
+      MSIsensor determination of either microsatellite stability or instability.
+    enum:
+      - MSI
+      - MSS
+
+  pairs_on_diff_chr:
+    $ref:
+      - "_terms.yaml#/pairs_on_diff_chr/common"
+    type: integer
+    minimum: 0
+
+  platform:
+    $ref:
+      - "read_group.yaml#/properties/platform"
+
+  proportion_base_mismatch:
+    $ref:
+      - "_terms.yaml#/proportion_base_mismatch/common"
+    type: number
+    maximum: 1
+    minimum: 0
+
+  proportion_coverage_10x:
+    $ref:
+      - "_terms.yaml#/proportion_coverage_10x/common"
+    type: number
+    maximum: 1
+    minimum: 0
+
+  proportion_coverage_30x:
+    $ref:
+      - "_terms.yaml#/proportion_coverage_30x/common"
+    type: number
+    maximum: 1
+    minimum: 0
+
+  proportion_reads_duplicated:
+    $ref:
+      - "_terms.yaml#/proportion_reads_duplicated/common"
+    type: number
+    minimum: 0
+
+  proportion_reads_mapped:
+    $ref:
+      - "_terms.yaml#/proportion_reads_mapped/common"
+    type: number
+    maximum: 1
+    minimum: 0
+
+  proportion_targets_no_coverage:
+    $ref:
+      - "_terms.yaml#/proportion_targets_no_coverage/common"
+    type: number
+    maximum: 1
+    minimum: 0
+
+  total_reads:
+    $ref:
+      - "_terms.yaml#/total_reads/common"
+    type: integer
+    minimum: 0
+
+  tumor_ploidy:
+    $ref:
+      - "_terms.yaml#/tumor_ploidy/common"
+    type: number
+    minimum: 0
+
+  tumor_purity:
+    $ref:
+      - "_terms.yaml#/tumor_purity/common"
+    type: number
+    maximum: 1
+    minimum: 0
+
+  wgs_coverage:
+    $ref:
+      - "_terms.yaml#/wgs_coverage/common"
+    enum:
+      - 0x-10x
+      - 10x-25x
+      - 25x-150x
+      - 150x+
+      - Unknown
+      - Not Applicable
+    enumDef:
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Applicable:
+        $ref:
+          - "_terms_enum.yaml#/not_applicable/common"
+
+  alignment_cocleaning_workflows:
+    $ref: "_definitions.yaml#/to_one"
+
+  alignment_workflows:
+    $ref: "_definitions.yaml#/to_one"
+
+  submitted_unaligned_reads_files:
+    $ref: "_definitions.yaml#/to_many"
+
+  submitted_aligned_reads_files:
+    $ref: "_definitions.yaml#/to_one"

@@ -1,0 +1,77 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "portion"
+title: Portion
+type: object
+namespace: https://gdc.cancer.gov
+category: biospecimen
+project: '*'
+program: '*'
+description: >-
+  A physical sub-part of any sample.
+additionalProperties: false
+submittable: true
+downloadable: false
+previous_version_downloadable: false
+validators: null
+
+systemProperties:
+  - id
+  - project_id
+  - created_datetime
+  - updated_datetime
+  - state
+
+links:
+  - name: samples
+    backref: portions
+    label: derived_from
+    target_type: sample
+    multiplicity: many_to_one
+    required: true
+  - name: centers
+    backref: portions
+    label: shipped_to
+    target_type: center
+    multiplicity: many_to_one
+    required: false
+
+required:
+  - submitter_id
+
+uniqueKeys:
+  - [id]
+  - [project_id, submitter_id]
+
+properties:
+
+  $ref:
+    - "_definitions.yaml#/ubiquitous_properties"
+
+  creation_datetime:
+    $ref:
+      - "_terms.yaml#/creation_datetime/common"
+    type: number
+    minimum: 0
+
+  is_ffpe:
+    $ref:
+      - "_terms.yaml#/is_ffpe/common"
+    type: boolean
+
+  portion_number:
+    $ref:
+      - "_terms.yaml#/portion_number/common"
+    type: string
+
+  weight:
+    $ref:
+      - "_terms.yaml#/portion_weight/common"
+    type: number
+    minimum: 0
+
+  samples:
+    $ref: "_definitions.yaml#/to_one"
+
+  centers:
+    $ref: "_definitions.yaml#/to_one"

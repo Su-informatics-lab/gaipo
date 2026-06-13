@@ -1,0 +1,41 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "data_type"
+title: Data Type
+type: object
+namespace: https://gdc.cancer.gov
+category: TBD
+project: '*'
+program: '*'
+description: >-
+  Data type of a legacy file (deprecated).
+additionalProperties: false
+submittable: false
+downloadable: false
+previous_version_downloadable: false
+validators: null
+
+systemProperties:
+  - id
+
+links: []
+
+required:
+  - name
+
+uniqueKeys:
+  - [id]
+
+properties:
+
+  type:
+    type: string
+
+  id:
+    $ref:
+      - "_definitions.yaml#/uuid"
+
+  name:
+    description: >-
+      name of this data type
+    type: string

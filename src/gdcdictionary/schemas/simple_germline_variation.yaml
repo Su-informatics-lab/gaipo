@@ -1,0 +1,96 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "simple_germline_variation"
+title: Simple Germline Variation
+type: object
+namespace: https://gdc.cancer.gov
+category: data_file
+project: '*'
+program: '*'
+description: >-
+  Data file containing simple germline variations called from aligned reads.
+additionalProperties: false
+submittable: false
+downloadable: true
+previous_version_downloadable: true
+validators: null
+
+systemProperties:
+  - id
+  - project_id
+  - created_datetime
+  - updated_datetime
+  - file_state
+  - state
+  - error_type
+
+links:
+  - name: germline_mutation_calling_workflows
+    backref: simple_germline_variations
+    label: data_from
+    target_type: germline_mutation_calling_workflow
+    multiplicity: many_to_one
+    required: true
+
+required:
+  - submitter_id
+  - file_name
+  - file_size
+  - md5sum
+  - data_category
+  - data_format
+  - data_type
+  - experimental_strategy
+
+uniqueKeys:
+  - [id]
+  - [project_id, submitter_id]
+
+properties:
+
+  $ref:
+    - "_definitions.yaml#/data_file_properties"
+
+  data_category:
+    $ref:
+      - "_terms.yaml#/data_category/common"
+    enum:
+      - Simple Nucleotide Variation
+
+  data_format:
+    $ref:
+      - "_terms.yaml#/data_format/common"
+    enum:
+      - gVCF
+      - TSV
+      - VCF
+
+  data_type:
+    $ref:
+      - "_terms.yaml#/data_type/common"
+    enum:
+      - Simple Germline Variation
+
+  experimental_strategy:
+    $ref:
+      - "_terms.yaml#/experimental_strategy/common"
+    enum:
+      - ATAC-Seq
+      - Bisulfite-Seq
+      - ChIP-Seq
+      - Genotyping Array
+      - miRNA-Seq
+      - RNA-Seq
+      - Targeted Sequencing
+      - WGS
+      - WXS
+
+  platform:
+    $ref:
+      - "_terms.yaml#/platform/common"
+    enum:
+      - Affymetrix SNP 6.0
+      - Illumina
+
+  germline_mutation_calling_workflows:
+    $ref: "_definitions.yaml#/to_one"

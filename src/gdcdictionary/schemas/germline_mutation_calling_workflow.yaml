@@ -1,0 +1,69 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "germline_mutation_calling_workflow"
+title: Germline Mutation Calling Workflow
+type: object
+namespace: https://gdc.cancer.gov
+category: analysis
+project: '*'
+program: '*'
+description: >-
+  Metadata for the germline mutation calling pipeline used to call variants in the
+  GDC DNA-Seq pipelines.
+additionalProperties: false
+submittable: false
+downloadable: false
+previous_version_downloadable: false
+validators: null
+
+systemProperties:
+  - id
+  - project_id
+  - created_datetime
+  - updated_datetime
+  - state
+
+links:
+  - exclusive: true
+    required: true
+    subgroup:
+      - name: aligned_reads_files
+        backref: germline_mutation_calling_workflows
+        label: performed_on
+        target_type: aligned_reads
+        multiplicity: one_to_many
+        required: false
+      - name: submitted_genotyping_arrays
+        backref: germline_mutation_calling_workflows
+        label: performed_on
+        target_type: submitted_genotyping_array
+        multiplicity: many_to_one
+        required: false
+
+required:
+  - submitter_id
+  - workflow_link
+  - workflow_type
+
+uniqueKeys:
+  - [id]
+  - [project_id, submitter_id]
+
+properties:
+
+  $ref:
+    - "_definitions.yaml#/workflow_properties"
+
+  workflow_type:
+    $ref:
+      - "_terms.yaml#/workflow_type/common"
+    enum:
+      - Birdseed
+      - HaplotypeCaller
+      - Strelka2 Germline
+
+  aligned_reads_files:
+    $ref: "_definitions.yaml#/to_many"
+
+  submitted_genotyping_arrays:
+    $ref: "_definitions.yaml#/to_one"

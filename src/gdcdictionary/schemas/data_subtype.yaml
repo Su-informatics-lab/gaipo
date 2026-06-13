@@ -1,0 +1,52 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "data_subtype"
+title: Data Subtype
+type: object
+namespace: https://gdc.cancer.gov
+category: TBD
+project: '*'
+program: '*'
+description: >-
+  Data subtype of a legacy file (deprecated).
+additionalProperties: false
+submittable: false
+downloadable: false
+previous_version_downloadable: false
+validators: null
+
+systemProperties:
+  - id
+
+links:
+  - name: data_types
+    backref: data_subtypes
+    label: member_of
+    target_type: data_type
+    multiplicity: many_to_one
+    required: true
+
+required:
+  - name
+  - data_types
+
+uniqueKeys:
+  - [id]
+  - [name]
+
+properties:
+
+  type:
+    type: string
+
+  id:
+    $ref:
+      - "_definitions.yaml#/uuid"
+
+  name:
+    description: >-
+      name of this data subtype
+    type: string
+
+  data_types:
+    $ref: "_definitions.yaml#/to_one"

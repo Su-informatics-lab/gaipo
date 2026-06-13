@@ -1,0 +1,70 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "center"
+title: Center
+type: object
+namespace: https://gdc.cancer.gov
+category: administrative
+project: '*'
+program: '*'
+description: >-
+  A Professional Organization or Group which has or is able to submit data to the
+  GDC that are valid with respect to GDC prescribed or defined data formats. (GDC
+  subclass of NCIt C19711)
+additionalProperties: false
+submittable: false
+downloadable: false
+previous_version_downloadable: false
+validators: null
+
+systemProperties:
+  - id
+
+links: []
+
+required:
+  - code
+  - namespace
+  - name
+  - short_name
+  - center_type
+
+uniqueKeys:
+  - [id]
+  - [code]
+
+properties:
+
+  type:
+    type: string
+
+  id:
+    $ref:
+      - "_definitions.yaml#/uuid"
+    description: >-
+      UUID for the center.
+
+  code:
+    description: >-
+      Numeric code for the center.
+    type: string
+
+  namespace:
+    description: >-
+      Domain name of the center (e.g. broad.mit.edu).
+    type: string
+
+  name:
+    description: >-
+      Name of the center (e.g. Broad Institute of MIT and Harvard).
+    type: string
+
+  short_name:
+    description: >-
+      Shortened name of the center (e.g. BI).
+    type: string
+
+  center_type:
+    description: >-
+      Type classification of the center (e.g. CGCC).
+    type: string

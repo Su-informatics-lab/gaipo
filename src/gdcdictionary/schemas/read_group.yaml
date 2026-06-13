@@ -1,0 +1,479 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "read_group"
+title: Read Group
+type: object
+namespace: https://gdc.cancer.gov
+category: biospecimen
+project: '*'
+program: '*'
+description: >-
+  Sequencing reads from one lane of an NGS experiment.
+additionalProperties: false
+submittable: true
+downloadable: false
+previous_version_downloadable: false
+validators: null
+
+systemProperties:
+  - id
+  - project_id
+  - created_datetime
+  - updated_datetime
+  - state
+
+links:
+  - name: aliquots
+    backref: read_groups
+    label: derived_from
+    target_type: aliquot
+    multiplicity: many_to_one
+    required: true
+
+required:
+  - submitter_id
+  - aliquots
+  - experiment_name
+  - sequencing_center
+  - platform
+  - library_selection
+  - library_strategy
+  - library_name
+  - is_paired_end
+  - read_length
+  - read_group_name
+  - target_capture_kit
+
+uniqueKeys:
+  - [id]
+  - [project_id, submitter_id]
+
+deprecated:
+  - target_capture_kit_catalog_number
+  - target_capture_kit_name
+  - target_capture_kit_target_region
+  - target_capture_kit_vendor
+  - target_capture_kit_version
+
+properties:
+
+  $ref:
+    - "_definitions.yaml#/ubiquitous_properties"
+
+  adapter_name:
+    $ref:
+      - "_terms.yaml#/adapter_name/common"
+    type: string
+
+  adapter_sequence:
+    $ref:
+      - "_terms.yaml#/adapter_sequence/common"
+    type: string
+
+  base_caller_name:
+    $ref:
+      - "_terms.yaml#/base_caller_name/common"
+    type: string
+
+  base_caller_version:
+    $ref:
+      - "_terms.yaml#/base_caller_version/common"
+    type: string
+
+  chipseq_antibody:
+    $ref:
+      - "_terms.yaml#/chipseq_antibody/common"
+    enum:
+      - abcam ab4729 anti-H3K27ac
+      - Unknown
+      - Not Applicable
+    enumDef:
+      Not Applicable:
+        $ref:
+          - "_terms_enum.yaml#/not_applicable/common"
+
+  chipseq_target:
+    $ref:
+      - "_terms.yaml#/chipseq_target/common"
+    enum:
+      - H3K4me1
+      - H3K4me3
+      - H3K9me3
+      - H3K27me3
+      - H3K36me3
+      - H3K27ac
+      - Input Control
+      - Unknown
+
+  days_to_sequencing:
+    $ref:
+      - "_terms.yaml#/days_to_sequencing/common"
+    type: integer
+    minimum: -32872
+
+  experiment_name:
+    $ref:
+      - "_terms.yaml#/experiment_name/common"
+    type: string
+
+  flow_cell_barcode:
+    $ref:
+      - "_terms.yaml#/flow_cell_barcode/common"
+    type: string
+
+  fragment_maximum_length:
+    $ref:
+      - "_terms.yaml#/fragment_maximum_length/common"
+    type: integer
+    minimum: 0
+
+  fragment_mean_length:
+    $ref:
+      - "_terms.yaml#/fragment_mean_length/common"
+    type: number
+    minimum: 0
+
+  fragment_minimum_length:
+    $ref:
+      - "_terms.yaml#/fragment_minimum_length/common"
+    type: integer
+    minimum: 0
+
+  fragment_standard_deviation_length:
+    $ref:
+      - "_terms.yaml#/fragment_standard_deviation_length/common"
+    type: number
+    minimum: 0
+
+  fragmentation_enzyme:
+    $ref:
+      - "_terms.yaml#/fragmentation_enzyme/common"
+    enum:
+      - MboI
+      - Unknown
+      - Not Applicable
+    enumDef:
+      Not Applicable:
+        $ref:
+          - "_terms_enum.yaml#/not_applicable/common"
+
+  includes_spike_ins:
+    $ref:
+      - "_terms.yaml#/includes_spike_ins/common"
+    type: boolean
+
+  instrument_model:
+    $ref:
+      - "_terms.yaml#/instrument_model/common"
+    enum:
+      - 454 GS FLX Titanium
+      - AB SOLiD 2
+      - AB SOLiD 3
+      - AB SOLiD 4
+      - Complete Genomics
+      - Illumina Genome Analyzer II
+      - Illumina Genome Analyzer IIx
+      - Illumina HiSeq 2000
+      - Illumina HiSeq 2500
+      - Illumina HiSeq 4000
+      - Illumina HiSeq X Five
+      - Illumina HiSeq X Ten
+      - Illumina MiSeq
+      - Illumina NextSeq
+      - Illumina NovaSeq 6000
+      - Illumina NovaSeq X
+      - Ion Torrent PGM
+      - Ion Torrent Proton
+      - Ion Torrent S5
+      - Other
+      - PacBio RS
+      - Unknown
+      - Not Reported
+    enumDef:
+      Other:
+        $ref:
+          - "_terms_enum.yaml#/other/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+
+  is_paired_end:
+    $ref:
+      - "_terms.yaml#/is_paired_end/common"
+    oneOf:
+      - type: boolean
+      - type: "null"
+
+  lane_number:
+    $ref:
+      - "_terms.yaml#/lane_number/common"
+    type: integer
+    minimum: 1
+
+  library_name:
+    $ref:
+      - "_terms.yaml#/library_name/common"
+    type: string
+
+  library_preparation_kit_name:
+    $ref:
+      - "_terms.yaml#/library_preparation_kit_name/common"
+    type: string
+
+  library_preparation_kit_vendor:
+    $ref:
+      - "_terms.yaml#/library_preparation_kit_vendor/common"
+    type: string
+
+  library_preparation_kit_catalog_number:
+    $ref:
+      - "_terms.yaml#/library_preparation_kit_catalog_number/common"
+    type: string
+
+  library_preparation_kit_version:
+    $ref:
+      - "_terms.yaml#/library_preparation_kit_version/common"
+    type: string
+
+  library_selection:
+    $ref:
+      - "_terms.yaml#/library_selection/common"
+    enum:
+      - Affinity Enrichment
+      - Hybrid Selection
+      - miRNA Size Fractionation
+      - Other
+      - PCR
+      - Poly-T Enrichment
+      - Random
+      - rRNA Depletion
+    enumDef:
+      Other:
+        $ref:
+          - "_terms_enum.yaml#/other/common"
+      PCR:
+        $ref:
+          - "_terms_enum.yaml#/pcr/common"
+
+  library_strand:
+    $ref:
+      - "_terms.yaml#/library_strand/common"
+    enum:
+      - Unstranded
+      - First_Stranded
+      - Second_Stranded
+      - Not Applicable
+    enumDef:
+      Not Applicable:
+        $ref:
+          - "_terms_enum.yaml#/not_applicable/common"
+
+  library_strategy:
+    $ref:
+      - "_terms.yaml#/library_strategy/common"
+    enum:
+      - ATAC-Seq
+      - Bisulfite-Seq
+      - ChIP-Seq
+      - HiChIP
+      - m6A MeRIP-Seq
+      - miRNA-Seq
+      - RNA-Seq
+      - scATAC-Seq
+      - scRNA-Seq
+      - Targeted Sequencing
+      - WGS
+      - WXS
+    enumDef:
+      Targeted Sequencing:
+        $ref:
+          - "_terms_enum.yaml#/targeted_sequencing/common"
+      WGS:
+        $ref:
+          - "_terms_enum.yaml#/wgs/common"
+      WXS:
+        $ref:
+          - "_terms_enum.yaml#/wxs/common"
+
+  multiplex_barcode:
+    $ref:
+      - "_terms.yaml#/multiplex_barcode/common"
+    type: string
+    pattern: "^[0-9ACGTURYSWKMBDHVN]+([\\+\\-][0-9ACGTURYSWKMBDHVN]+){,2}$"
+
+  number_expect_cells:
+    $ref:
+      - "_terms.yaml#/number_expect_cells/common"
+    type: integer
+    minimum: 0
+
+  platform:
+    $ref:
+      - "_terms.yaml#/platform/common"
+    enum:
+      - Complete Genomics
+      - Illumina
+      - Ion Torrent
+      - LS454
+      - Other
+      - PacBio
+      - SOLiD
+    enumDef:
+      Other:
+        $ref:
+          - "_terms_enum.yaml#/other/common"
+
+  read_group_name:
+    description: >-
+      Read Group Name
+    type: string
+
+  read_length:
+    $ref:
+      - "_terms.yaml#/read_length/common"
+    oneOf:
+      - type: integer
+        minimum: 0
+      - type: "null"
+
+  rin:
+    $ref:
+      - "_terms.yaml#/rin/common"
+    type: number
+    maximum: 10
+    minimum: 1
+
+  sequencing_center:
+    $ref:
+      - "_terms.yaml#/sequencing_center/common"
+    type: string
+
+  sequencing_date:
+    $ref:
+      - "_definitions.yaml#/datetime"
+
+  size_selection_range:
+    $ref:
+      - "_terms.yaml#/size_selection_range/common"
+    type: string
+
+  single_cell_library:
+    $ref:
+      - "_terms.yaml#/single_cell_library/common"
+    enum:
+      - Chromium 3' Gene Expression v1 Library
+      - Chromium 3' Gene Expression v2 Library
+      - Chromium 3' Gene Expression v3 Library
+      - Chromium 3' Gene Expression v4 Library
+      - Chromium Next GEM Single Cell Multiome ATAC + Gene Expression Library
+      - Chromium scATAC v1 Library
+      - Smart-Seq2
+
+  spike_ins_concentration:
+    $ref:
+      - "_terms.yaml#/spike_ins_concentration/common"
+    type: string
+
+  spike_ins_fasta:
+    $ref:
+      - "_terms.yaml#/spike_ins_fasta/common"
+    type: string
+
+  target_capture_kit:
+    $ref:
+      - "_terms.yaml#/target_capture_kit/common"
+    enum:
+      - Custom AmpliSeq Cancer Hotspot GENIE-MDA Augmented Panel v1 - 46 Genes
+      - Custom GENIE-DFCI OncoPanel - 275 Genes
+      - Custom GENIE-DFCI Oncopanel - 300 Genes
+      - Custom GENIE-DFCI Oncopanel - 447 Genes
+      - Custom HaloPlex DLBCL Panel - 370 Genes
+      - Custom Ion AmpliSeq Hotspot GENIE-MOSC3 Augmented Panel - 74 Genes
+      - Custom Large Construct Capture TARGET-OS Panel - 8 Genes
+      - Custom MSK IMPACT Panel - 341 Genes
+      - Custom MSK IMPACT Panel - 410 Genes
+      - Custom MSK IMPACT Panel - 468 Genes
+      - Custom Myeloid GENIE-VICC Panel - 37 Genes
+      - Custom Personalis ACEcp VAREPOP-APOLLO Panel v2
+      - Custom PGDX SureSelect CancerSelect VAREPOP-APOLLO Panel - 203 Genes
+      - Custom PGDX SureSelect CancerSelect VAREPOP-APOLLO Panel - 88 Genes
+      - Custom SeqCap EZ BeatAML Panel - 12.5 Mb
+      - Custom SeqCap EZ HGSC VCRome v2.1 ER Augmented v1
+      - Custom SeqCap EZ HGSC VCRome v2.1 ER Augmented v2
+      - Custom SeqCap EZ TARGET-OS Panel - 7.0 Mb
+      - Custom Solid Tumor GENIE-VICC Panel - 34 Genes
+      - Custom SureSelect CGCI-BLGSP Panel - 4.6 Mb
+      - Custom SureSelect CGCI-BLGSP Panel - 7.8 Mb
+      - Custom SureSelect CGCI-HTMCP-CC KMT2D And Hotspot Panel - 37.0 Kb
+      - Custom SureSelect CGCI-HTMCP-CC Panel - 19.7 Mb
+      - Custom SureSelect GENIE-UHN Panel - 555 Genes
+      - Custom SureSelect Human All Exon v1.1 Plus 3 Boosters
+      - Custom SureSelect TARGET-AML_NBL_WT Panel - 2.8 Mb
+      - Custom Twist Broad Exome v1.0 - 35.0 Mb
+      - Custom Twist Broad PanCancer Panel - 396 Genes
+      - Custom Twist MP2PRT-WT Panel - 52 Kb
+      - Foundation Medicine T5a Panel - 322 Genes
+      - Foundation Medicine T7 Panel - 429 Genes
+      - Ion AmpliSeq Cancer Hotspot Panel v2
+      - Ion AmpliSeq Comprehensive Cancer Panel
+      - Nextera DNA Exome
+      - Nextera Rapid Capture Exome v1.2
+      - Not Applicable
+      - SeqCap EZ HGSC VCRome v2.1
+      - SeqCap EZ Human Exome v2.0
+      - SeqCap EZ Human Exome v3.0
+      - SureSelect Human All Exon v3
+      - SureSelect Human All Exon v4
+      - SureSelect Human All Exon v5
+      - SureSelect Human All Exon v5 + UTR
+      - TruSeq Amplicon Cancer Panel
+      - TruSeq Exome Enrichment - 62 Mb
+      - TruSeq RNA Exome
+      - TruSight Myeloid Sequencing Panel
+      - Twist Human Comprehensive Exome
+      - xGen Exome Research Panel v1.0
+      - xGen Exome Research Panel v2.0
+      - Unknown
+    enumDef:
+      Not Applicable:
+        $ref:
+          - "_terms_enum.yaml#/not_applicable/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+
+  target_capture_kit_catalog_number:
+    $ref:
+      - "_terms.yaml#/target_capture_kit_catalog_number/common"
+    type: string
+
+  target_capture_kit_name:
+    $ref:
+      - "_terms.yaml#/target_capture_kit_name/common"
+    type: string
+
+  target_capture_kit_target_region:
+    $ref:
+      - "_terms.yaml#/target_capture_kit_target_region/common"
+    type: string
+
+  target_capture_kit_vendor:
+    $ref:
+      - "_terms.yaml#/target_capture_kit_vendor/common"
+    type: string
+
+  target_capture_kit_version:
+    $ref:
+      - "_terms.yaml#/target_capture_kit_version/common"
+    type: string
+
+  to_trim_adapter_sequence:
+    $ref:
+      - "_terms.yaml#/to_trim_adapter_sequence/common"
+    type: boolean
+
+  aliquots:
+    $ref: "_definitions.yaml#/to_one"
