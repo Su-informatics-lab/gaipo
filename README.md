@@ -2,7 +2,7 @@
 
 **Graph Artificial Intelligence for Pediatric Oncology**
 
-Advances in artificial intelligence (AI) are shifting the paradigm in precision medicine for pediatric cancer, including biomarker identification, drug discovery, and survival analysis. The Childhood Cancer Data Initiative (CCDI) ecosystem provides essential clinicogenomic data for deep learning in pediatric cancer research. To enable the efficient use of the CCDI resource for AI model training and implementation, we developed a generic graph AI platform, Graph Artificial Intelligence for Pediatric Oncology (GAIPO), as well as the standards of data, model, and pipeline, to streamline the use of CCDI clinicogenomics data of various data modalities from bulk and single-cell omics data to clinical information in AI development. GAIPO provides a comprehensive workflow: 
+The Childhood Cancer Data Initiative (CCDI) ecosystem provides essential clinicogenomic data for deep learning in pediatric cancer research. To enable the efficient use of the CCDI resource for AI model training and implementation, we developed a generic graph AI platform, Graph Artificial Intelligence for Pediatric Oncology (GAIPO), as well as the standards of data, model, and pipeline, to streamline the use of CCDI clinicogenomics data of various data modalities from bulk and single-cell omics data to clinical information in AI development. GAIPO provides a comprehensive workflow: 
 
 (1) Data fetching through CCDI Data Federation Resource API and cBioPortal API, and ScPCA for clinical metadata, multi-omics, and spatial transcriptomics data; 
 
@@ -12,22 +12,22 @@ Advances in artificial intelligence (AI) are shifting the paradigm in precision 
 
 (4) Implementation of previously published graph AI models and development of novel models; 
 
-(5) Post-analysis, such as vital feature selection and survival analysis. We demonstrate the capabilities of our GAIPO in treating two pediatric cancers, glioma and Wilms tumor, with potential applicability to other pediatric cancers.
+(5) Post-analysis, such as vital feature selection and survival analysis. 
 
 
 ![GAIPO overview](image/GAIPO.png)
 
 ## Overview
 
-Pediatric oncology studies often combine heterogeneous clinical and omics data collected across multiple programs and platforms. GAIPO organizes this process into reproducible modules that can be run independently or as an end-to-end pipeline.
+Advances in artificial intelligence (AI) are shifting the paradigm in precision medicine for pediatric cancer, including biomarker identification, drug discovery, and survival analysis. Studies of advanced AI models for Pediatric oncology research often combine heterogeneous clinical and omics data collected across multiple programs and platforms. GAIPO organizes this process into reproducible modules that can be run independently or as an end-to-end pipeline.
 
 The framework is designed to support:
 
 - Cohort and identifier discovery from CCDI Federation sources.
 - Extraction of clinical and multi-omics data.
-- Harmonization into GDC-shaped, analysis-ready data models.
+- Harmonization into CCDI/GDC-supported, analysis-ready data models.
 - Modality-specific quality control, feature selection, and scaling.
-- Patient-similarity graph construction.
+- Patient-similarity graph construction (for clincogenomics data).
 - Graph AI models for tumor classification and survival analysis.
 - Model interpretation, biomarker prioritization, and post-model survival analysis.
 - Reproducible execution through Docker Compose.
@@ -81,7 +81,7 @@ The exact modalities used in a run are defined by the cohort configuration and d
 
 ### Graph construction
 
-Patients are represented as graph nodes, with node features derived from processed clinical or omics measurements. Edges encode patient similarity, such as cosine similarity under a configurable radius or neighborhood rule. To prevent information leakage, graph-construction parameters estimated from the training set should be reused for validation and test data.
+For clincogenomics data, patients are represented as graph nodes, with node features derived from processed clinical or omics measurements. Edges encode patient similarity, such as cosine similarity under a configurable radius or neighborhood rule. To prevent information leakage, graph-construction parameters estimated from the training set should be reused for validation and test data.
 
 ### Graph AI and interpretation
 
@@ -279,6 +279,10 @@ Issues and pull requests are welcome. For substantial changes, open an issue fir
 ## Citation
 
 If you use GAIPO in a publication, please cite the associated manuscript and software release. Formal citation information will be added when available.
+
+Based on GAIPO, we developed an end-to-end multimodal framework, PCGS (i.e., biomarker and risk group identification for Pediatric Cancers via GNNs with Shapley-value-based explainability) for pediatric cancer by incorporating omics-specific representation learning via GNN models with cross-attention fusion and multi-head task losses in model training for downstream tasks such as classification, clustering, and survival analysis. We applied Shapley value-based feature attribution to identify key biomarkers for patient stratification, with sensitivity to baseline background selection. Please cite:
+Shi, Zanyu, Aishwarya Budhkar, Waqas Amin, Karen E. Pollok, Jing Su, and Kun Huang. "PCGS: biomarker and risk group identification for Pediatric Cancers via explainable Graph neural networks with Shapley values." medRxiv (2026): 2026-08.
+
 
 ## License
 
