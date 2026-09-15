@@ -65,6 +65,7 @@ GAIPO is designed to work with pediatric cancer data available through the CCDI 
 - Kids First
 - CCDI ecDNA
 - cBioPortal or PedcBioPortal-compatible studies
+- Single-cell Pediatric Cancer Atlas Portal (ScPCA)
 
 Availability varies by cohort. Users are responsible for complying with the data-use agreements, authentication requirements, and access controls of each source.
 
@@ -77,7 +78,7 @@ The framework can integrate clinical variables with one or more genomics modalit
 - DNA methylation
 - miRNA expression
 
-The exact modalities used in a run are defined by the cohort configuration and data availability.
+The exact modalities used in a run depend on the cohort configuration and data availability.
 
 ### Graph construction
 
