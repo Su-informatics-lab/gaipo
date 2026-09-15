@@ -64,7 +64,7 @@ GAIPO is designed to work with pediatric cancer data available through the CCDI 
 - St. Jude Cloud
 - Kids First
 - CCDI ecDNA
-- cBioPortal or pediatric cBioPortal-compatible studies
+- cBioPortal or PedcBioPortal-compatible studies
 
 Availability varies by cohort. Users are responsible for complying with the data-use agreements, authentication requirements, and access controls of each source.
 
