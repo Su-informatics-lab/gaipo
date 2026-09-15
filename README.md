@@ -106,7 +106,7 @@ Choose one of the following execution options:
 For either option, clone the repository and enter its root directory:
 
 ```bash
-git clone https://github.com/<organization-or-user>/GAIPO.git
+git clone https://github.com/Su-informatics-lab/gaipo.git
 cd GAIPO
 ```
 
