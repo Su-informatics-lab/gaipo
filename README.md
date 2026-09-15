@@ -12,7 +12,7 @@ The Childhood Cancer Data Initiative (CCDI) ecosystem provides essential clinico
 
 (4) Implementation of previously published graph AI models and development of novel models; 
 
-(5) Post-analysis, such as vital feature selection and survival analysis. 
+(5) Post-analysis, such as cancer type classification, patient stratification, clustering, survival analysis, and feature selection. 
 
 
 ![GAIPO overview](image/GAIPO.png)
