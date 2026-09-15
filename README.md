@@ -12,7 +12,7 @@ The Childhood Cancer Data Initiative (CCDI) ecosystem provides essential clinico
 
 (4) Implementation of previously published graph AI models and development of novel models; 
 
-(5) Post-analysis, such as vital feature selection and survival analysis. 
+(5) Post-analysis, such as cancer type classification, patient stratification, clustering, survival analysis, and feature selection. 
 
 
 ![GAIPO overview](image/GAIPO.png)
@@ -65,19 +65,20 @@ GAIPO is designed to work with pediatric cancer data available through the CCDI 
 - Kids First
 - CCDI ecDNA
 - cBioPortal or PedcBioPortal-compatible studies
+- Single-cell Pediatric Cancer Atlas Portal (ScPCA)
 
 Availability varies by cohort. Users are responsible for complying with the data-use agreements, authentication requirements, and access controls of each source.
 
 ### Supported data types
 
-The framework can integrate clinical variables with one or more molecular modalities, including:
+The framework can integrate clinical variables with one or more genomics modalities, including:
 
 - mRNA expression
 - Copy-number alteration data
 - DNA methylation
 - miRNA expression
 
-The exact modalities used in a run are defined by the cohort configuration and data availability.
+The exact modalities used in a run depend on the cohort configuration and data availability.
 
 ### Graph construction
 
@@ -87,7 +88,7 @@ For clincogenomics data, patients are represented as graph nodes, with node feat
 
 GAIPO supports graph neural network architectures such as GCN, GAT, and GIN. The modeling layer can be configured for:
 
-- Tumor or molecular-subtype classification.
+- Tumor or histological subtype classification.
 - Time-to-event modeling using a Cox partial-likelihood objective.
 - Multi-task learning across classification and survival endpoints.
 - Modality-specific graph encoders and cross-attention fusion.
@@ -106,7 +107,7 @@ Choose one of the following execution options:
 For either option, clone the repository and enter its root directory:
 
 ```bash
-git clone https://github.com/<organization-or-user>/GAIPO.git
+git clone https://github.com/Su-informatics-lab/gaipo.git
 cd GAIPO
 ```
 
@@ -267,7 +268,7 @@ Record the configuration, software versions, random seeds, cohort manifest, and 
 
 - **A downstream stage cannot find its inputs:** run the required upstream stages or verify the configured artifact paths.
 - **The `src` module cannot be imported:** run the command from the repository root and confirm that the environment is activated.
-- **A container cannot read or write data:** check the host-directory mounts and permissions in `compose.yaml` or `docker-compose.yml`.
+- **A container cannot read or write data:** check the host-directory mounts and permissions in `docker-compose.yml`.
 - **Data extraction fails:** verify network access, source endpoints, credentials, and cohort availability.
 - **Results differ across runs:** fix random seeds and confirm that the same cohort manifest, configuration, split, and dependency versions were used.
 - **Validation performance is unexpectedly high:** check that preprocessing, graph construction, and risk-group thresholds were learned from the training set only.
