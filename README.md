@@ -2,13 +2,24 @@
 
 **Graph Artificial Intelligence for Pediatric Oncology**
 
-GAIPO is a modular and reproducible framework for pediatric cancer data integration, patient-graph construction, graph neural network modeling, and explainable downstream analysis. It connects clinical and multi-omics data processing with graph-based classification and survival modeling in a containerized workflow.
+Advances in artificial intelligence (AI) are shifting the paradigm in precision medicine for pediatric cancer, including biomarker identification, drug discovery, and survival analysis. The Childhood Cancer Data Initiative (CCDI) ecosystem provides essential clinicogenomic data for deep learning in pediatric cancer research. To enable the efficient use of the CCDI resource for AI model training and implementation, we developed a generic graph AI platform, Graph Artificial Intelligence for Pediatric Oncology (GAIPO), as well as the standards of data, model, and pipeline, to streamline the use of CCDI clinicogenomics data of various data modalities from bulk and single-cell omics data to clinical information in AI development. GAIPO provides a comprehensive workflow: 
+
+(1) Data fetching through CCDI Data Federation Resource API and cBioPortal API, and ScPCA for clinical metadata, multi-omics, and spatial transcriptomics data; 
+
+(2) Data modeling through mapping and harmonizing the fetched clinical and genomics data according to the CCDI data model; 
+
+(3) Graph construction functionalities through GraphML from NetworkX; 
+
+(4) Implementation of previously published graph AI models and development of novel models; 
+
+(5) Post-analysis, such as vital feature selection and survival analysis. We demonstrate the capabilities of our GAIPO in treating two pediatric cancers, glioma and Wilms tumor, with potential applicability to other pediatric cancers.
+
 
 ![GAIPO overview](image/GAIPO.png)
 
 ## Overview
 
-Pediatric oncology studies often combine heterogeneous clinical and molecular data collected across multiple programs and platforms. GAIPO organizes this process into reproducible modules that can be run independently or as an end-to-end pipeline.
+Pediatric oncology studies often combine heterogeneous clinical and omics data collected across multiple programs and platforms. GAIPO organizes this process into reproducible modules that can be run independently or as an end-to-end pipeline.
 
 The framework is designed to support:
 
