@@ -268,7 +268,7 @@ Record the configuration, software versions, random seeds, cohort manifest, and 
 
 - **A downstream stage cannot find its inputs:** run the required upstream stages or verify the configured artifact paths.
 - **The `src` module cannot be imported:** run the command from the repository root and confirm that the environment is activated.
-- **A container cannot read or write data:** check the host-directory mounts and permissions in `compose.yaml` or `docker-compose.yml`.
+- **A container cannot read or write data:** check the host-directory mounts and permissions in `docker-compose.yml`.
 - **Data extraction fails:** verify network access, source endpoints, credentials, and cohort availability.
 - **Results differ across runs:** fix random seeds and confirm that the same cohort manifest, configuration, split, and dependency versions were used.
 - **Validation performance is unexpectedly high:** check that preprocessing, graph construction, and risk-group thresholds were learned from the training set only.
