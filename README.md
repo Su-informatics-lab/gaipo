@@ -70,7 +70,7 @@ Availability varies by cohort. Users are responsible for complying with the data
 
 ### Supported data types
 
-The framework can integrate clinical variables with one or more molecular modalities, including:
+The framework can integrate clinical variables with one or more genomics modalities, including:
 
 - mRNA expression
 - Copy-number alteration data
@@ -87,7 +87,7 @@ For clincogenomics data, patients are represented as graph nodes, with node feat
 
 GAIPO supports graph neural network architectures such as GCN, GAT, and GIN. The modeling layer can be configured for:
 
-- Tumor or molecular-subtype classification.
+- Tumor or histological subtype classification.
 - Time-to-event modeling using a Cox partial-likelihood objective.
 - Multi-task learning across classification and survival endpoints.
 - Modality-specific graph encoders and cross-attention fusion.
