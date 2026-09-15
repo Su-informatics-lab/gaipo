@@ -1,0 +1,22 @@
+# core
+pandas==2.2.2
+pyarrow==17.0.0
+requests==2.32.3
+PyYAML==6.0.2
+
+# cBioPortal client stack (you mentioned bravado elsewhere)
+bravado==11.0.3
+bravado-core==6.1.1
+simplejson==3.19.2
+urllib3==2.2.2
+
+# graphs / ML (you’ll use later; pin conservatively)
+networkx==3.2.1
+scikit-learn==1.5.1
+
+# plots (for post_analysis later)
+matplotlib==3.9.0
+lifelines==0.28.0
+
+# nice-to-have
+tqdm==4.66.5

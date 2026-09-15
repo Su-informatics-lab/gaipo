@@ -1,0 +1,199 @@
+$schema: "http://json-schema.org/draft-04/schema#"
+
+id: "analyte"
+title: Analyte
+type: object
+namespace: https://gdc.cancer.gov
+category: biospecimen
+project: '*'
+program: '*'
+description: >-
+  A liquid bulk product produced according to specified lab protocols, from a sample
+  or analyte, intended for further analysis.
+additionalProperties: false
+submittable: true
+downloadable: false
+previous_version_downloadable: false
+validators: null
+
+systemProperties:
+  - id
+  - project_id
+  - created_datetime
+  - updated_datetime
+  - state
+
+links:
+  - exclusive: true
+    required: true
+    subgroup:
+      - name: portions
+        backref: analytes
+        label: derived_from
+        target_type: portion
+        multiplicity: many_to_one
+        required: false
+      - name: samples
+        backref: analytes
+        label: derived_from
+        target_type: sample
+        multiplicity: many_to_one
+        required: false
+
+required:
+  - submitter_id
+  - analyte_type
+
+uniqueKeys:
+  - [id]
+  - [project_id, submitter_id]
+
+deprecated:
+  - ribosomal_rna_28s_16s_ratio
+
+properties:
+
+  $ref:
+    - "_definitions.yaml#/ubiquitous_properties"
+
+  a260_a280_ratio:
+    $ref:
+      - "_terms.yaml#/a260_a280_ratio/common"
+    type: number
+    minimum: 0
+
+  amount:
+    $ref:
+      - "_terms.yaml#/amount/common"
+    type: number
+    minimum: 0
+
+  analyte_quantity:
+    $ref:
+      - "_terms.yaml#/analyte_quantity/common"
+    type: number
+    minimum: 0
+
+  analyte_type:
+    $ref:
+      - "_terms.yaml#/analyte_type/common"
+    enum:
+      - cfDNA
+      - DNA
+      - EBV Immortalized Normal
+      - FFPE DNA
+      - FFPE RNA
+      - GenomePlex (Rubicon) Amplified DNA
+      - m6A Enriched RNA
+      - Nuclei RNA
+      - Repli-G (Qiagen) DNA
+      - Repli-G Pooled (Qiagen) DNA
+      - Repli-G X (Qiagen) DNA
+      - RNA
+      - Total RNA
+    enumDef:
+      DNA:
+        $ref:
+          - "_terms_enum.yaml#/dna/common"
+      Total RNA:
+        $ref:
+          - "_terms_enum.yaml#/total_rna/common"
+
+  analyte_volume:
+    $ref:
+      - "_terms.yaml#/analyte_volume/common"
+    type: number
+    minimum: 0
+
+  concentration:
+    $ref:
+      - "_terms.yaml#/concentration/common"
+    type: number
+    minimum: 0
+
+  dna_integrity_number:
+    $ref:
+      - "_terms.yaml#/dna_integrity_number/common"
+    type: number
+    minimum: 0
+
+  experimental_protocol_type:
+    $ref:
+      - "_terms.yaml#/experimental_protocol_type/common"
+    enum:
+      - aDNA Preparation Type
+      - Allprep FFPE DNA
+      - Allprep RNA Extraction
+      - Chemical Lysis DNA Extraction
+      - Genomplex
+      - HighPure miRNA (Allprep DNA) FFPE RNA
+      - mirVana (Allprep DNA) RNA
+      - nRNA - Melanoma Protocol
+      - Pre-extracted DNA received by TSS
+      - Repli-G
+      - Repli-G X
+      - Total RNA
+    enumDef:
+      Total RNA:
+        $ref:
+          - "_terms_enum.yaml#/total_rna/common"
+
+  normal_tumor_genotype_snp_match:
+    $ref:
+      - "_terms.yaml#/normal_tumor_genotype_snp_match/common"
+    enum:
+      - "Yes"
+      - "No"
+      - Unknown
+      - Not Reported
+      - Not Allowed To Collect
+    enumDef:
+      "Yes":
+        $ref:
+          - "_terms_enum.yaml#/yes/common"
+      "No":
+        $ref:
+          - "_terms_enum.yaml#/no/common"
+      Unknown:
+        $ref:
+          - "_terms_enum.yaml#/unknown/common"
+      Not Reported:
+        $ref:
+          - "_terms_enum.yaml#/not_reported/common"
+      Not Allowed To Collect:
+        $ref:
+          - "_terms_enum.yaml#/not_allowed_to_collect/common"
+
+  ribosomal_rna_28s_16s_ratio:
+    $ref:
+      - "_terms.yaml#/ribosomal_rna_28s_16s_ratio/common"
+    type: number
+    minimum: 0
+
+  ribosomal_rna_28s_18s_ratio:
+    $ref:
+      - "_terms.yaml#/ribosomal_rna_28s_18s_ratio/common"
+    type: number
+    minimum: 0
+
+  rna_integrity_number:
+    $ref:
+      - "_terms.yaml#/rna_integrity_number/common"
+    type: number
+    maximum: 10
+
+  spectrophotometer_method:
+    $ref:
+      - "_terms.yaml#/spectrophotometer_method/common"
+    type: string
+
+  well_number:
+    $ref:
+      - "_terms.yaml#/well_number/common"
+    type: string
+
+  portions:
+    $ref: "_definitions.yaml#/to_one"
+
+  samples:
+    $ref: "_definitions.yaml#/to_one"

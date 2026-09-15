@@ -1,0 +1,120 @@
+# config/pipeline_config.yaml
+
+# 0) optional auth (kept null by default)
+auth:
+  ccdi_api_token: null              # not needed currently
+  cbioportal_api_token: null        # or set via env CBIOPORTAL_API_TOKEN
+  pedcbioportal_api_token: eyJhbGciOiJIUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICI4YWNlNDU1OS03ZDFlLTQ3YzAtOWE0ZC1mYWJiYTY4ODRmMzYifQ.eyJpYXQiOjE3NjA0OTUyOTIsImp0aSI6IjYxZWU4MmI4LWMzMjYtNDc1MS04NzBlLTYxZmVhNGU3ZDQ5MSIsImlzcyI6Imh0dHBzOi8va2V5Y2xvYWsua2lkc2ZpcnN0ZHJjLm9yZy9yZWFsbXMvcGVkY2Jpb3BvcnRhbCIsImF1ZCI6Imh0dHBzOi8va2V5Y2xvYWsua2lkc2ZpcnN0ZHJjLm9yZy9yZWFsbXMvcGVkY2Jpb3BvcnRhbCIsInN1YiI6IjEyMjAyODU2LTk0ODMtNDA2ZS04YzJkLTI3ODJkNTU0YWUyMiIsInR5cCI6Ik9mZmxpbmUiLCJhenAiOiJwZWRjYmlvcG9ydGFsLWFwaSIsInNlc3Npb25fc3RhdGUiOiI5ZGM0MTc0ZS0xZTgyLTRlZTEtYjZkOC1lMTVmYjAxMDg0OTkiLCJzY29wZSI6Im9wZW5pZCBvZmZsaW5lX2FjY2VzcyBwcm9maWxlIGVtYWlsIiwic2lkIjoiOWRjNDE3NGUtMWU4Mi00ZWUxLWI2ZDgtZTE1ZmIwMTA4NDk5In0.OBPmQasHaQy7n65qCPtUY_Ny4PmWqq9oiLSvGIK9Nuk   
+
+# 1) services (you already have these)
+services:
+  ccdi_sample_diagnosis: "https://federation.ccdi.cancer.gov/api/v1/sample-diagnosis"
+  ccdi_subject_diagnosis: "https://federation.ccdi.cancer.gov/api/v1/subject-diagnosis"
+  cbioportal_api: "https://www.cbioportal.org/api"
+  cbioportal_swagger: "https://www.cbioportal.org/api/v2/api-docs"
+  pedcbioportal_api: "https://pedcbioportal.kidsfirstdrc.org/api"
+  pedcbioportal_swagger: "https://pedcbioportal.kidsfirstdrc.org/api/v2/api-docs"
+
+# 2) source filter (null = all)
+target_source: null   # "PCDC" | "Treehouse" | "StJude" | "KidsFirst" | "ccdi-ecDNA"
+
+# 3) paging / HTTP
+per_page: 100
+verbose: true
+consider_overlap: false
+timeout: 60
+retry_status: [429, 500, 502, 503, 504]
+rate_limit:
+  sleep_seconds: 0.0   # bump to e.g. 0.2 if you hit 429s a lot
+
+# 4) cancer term dictionaries (unchanged)
+default_type_terms:
+  Wilms Tumor:
+    - "wilms"
+    - "nephroblastoma"
+    - "8960/3 : Nephroblastoma, NOS"
+  Glioma:
+    - "glioma"
+    - "high-grade glioma"
+    - "low-grade glioma"
+
+custom_type_terms: {}
+  # Neuroblastoma:
+  #   - "neuroblastoma"
+  #   - "nbl"
+
+# 5) which types you want right now
+cancer_type_interest:
+  - "Wilms Tumor"
+#  - "Glioma"
+
+# 6) study IDs (used when writing idmap parquet)
+cBio_studyId:
+  "Wilms Tumor": "wt_target_2018_pub"
+  "Glioma": "brain_cptac_2020"
+# pedcBio_studyId:
+#  "Wilms Tumor": null
+#  "Glioma": "pbta_all"
+
+# What expression profiles to pull for each type
+# valid keys: mrna, mirna, methylation, linear_cna
+expression_profiles:
+  "Wilms Tumor": [mrna, mirna, methylation]
+  "Glioma": [mrna, linear_cna]
+
+# 7) Processor label settings (per cancer type)
+processor:
+  labels:
+    Wilms Tumor:
+      source: samples
+      column: HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR
+      map: "FHWT=0,DAWT=1"
+      # mrna, mirna, methylation
+      var_threshold: [0.005, 0.001, 0.01]
+      alpha: [0.05, 0.1, 0.05]
+      top_k: [500, 200, 500]
+      test_size: 0.2
+      seed: 42
+    Glioma:
+      source: samples
+      column: CANCER_TYPE
+      map: "low-grade=0,high-grade=1"
+      var_threshold: [0.005, 0.001, 0.01]
+      alpha: [0.05, 0.10, 0.05]
+      top_k: [500, 500, 500]
+      test_size: 0.2
+      seed: 42
+
+# 10) graph_constructor.py
+patient_similarity_graph:
+  edges_per_node: 5  
+  save_graphml: false 
+
+# 11) graph_ai_model.py
+model_mogonet:
+  mode: train                 # or infer
+  checkpoints_dir: data/models
+  edges_per_node: 5
+  gcn_hidden: [400, 400, 200]
+  epochs: { pretrain: 50, train: 400 }
+  lr: { enc_pretrain: 1.0e-3, enc: 5.0e-4, clf: 1.0e-3 }
+  device: cpu
+  clinical_view:
+    enabled: true
+    # Choose any columns that appear in processor’s clinical_train/test.parquet
+    features: [AGE, CLINICAL_STAGE, RACE, SEX, ETHNICITY]
+
+# 12) post_analysis.py
+post_analysis:
+  survival:
+    enabled: true
+    group_col: HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR   # column in clinical_patients.csv
+    time_col: OS_MONTHS
+    status_col: OS_STATUS
+    title: "Overall Survival by Histology"
+    out_dir: data/analysis/km
+
+  feature_selection:
+    enabled: true
+    edges_per_node: 5
+    out_dir: data/analysis/feature_selection
