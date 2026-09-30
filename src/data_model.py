@@ -515,6 +515,57 @@ def _clinical_days_to_death(os_days: Optional[pd.Series], os_status: Optional[pd
     return out
 
 # ==============================================================================
+# Ontology layer hook (config: gdc_mapping.yaml -> ontology.enabled)
+# ==============================================================================
+
+_ONTOLOGY_CACHE: Dict[Tuple[str, str], Any] = {}
+
+def _get_ontology(cfg: dict):
+    from src.ontology import OntologyLayer
+    ocfg = (cfg or {}).get("ontology", {}) or {}
+    key = (str(ocfg.get("dir", "config/ontology")),
+           str((cfg or {}).get("schemas_dir", "src/gdcdictionary/schemas")))
+    if key not in _ONTOLOGY_CACHE:
+        _ONTOLOGY_CACHE[key] = OntologyLayer(*key)
+    return _ONTOLOGY_CACHE[key]
+
+def _ontology_annotations(patients_df: pd.DataFrame,
+                          samples_df: pd.DataFrame,
+                          cfg: dict) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+    """
+    Concept-based annotation of each subject (see src/ontology.py), plus the source values
+    that did not resolve. Returns (None, None) when the ontology layer is disabled, so the
+    legacy string maps stay in charge.
+    """
+    ocfg = (cfg or {}).get("ontology", {}) or {}
+    if not ocfg.get("enabled", False):
+        return None, None
+    onto = _get_ontology(cfg)
+    pid = "patientId" if "patientId" in patients_df.columns else "submitter_id"
+    ann = onto.annotate_cases(patients_df, samples_df, patient_id_col=pid)
+    unmapped = onto.unmapped_report(patients_df, samples_df, patient_id_col=pid)
+    return ann, unmapped
+
+def _apply_ontology(out: pd.DataFrame, ann: Optional[pd.DataFrame], cfg: dict) -> pd.DataFrame:
+    """
+    Concept-derived values win where the ontology resolved them. Elsewhere the legacy value is
+    kept if it is a valid GDC enum, otherwise set to 'Unknown' (the source value is listed in
+    data/metadata/unmapped_terms.tsv for curation instead of failing validation).
+    """
+    if ann is None or ann.empty:
+        return out
+    onto = _get_ontology(cfg)
+    a = ann.set_index("subject_id").reindex(out["submitter_id"].astype(str))
+    for col, src in (("disease_type", "gdc_disease_type"), ("primary_site", "gdc_primary_site")):
+        if col in out.columns:
+            new = a[src].to_numpy()
+            legacy = out[col].to_numpy()
+            allowed = set(onto.gdc_enum("case", col))
+            legacy_ok = np.array([v in allowed for v in legacy]) if allowed else np.ones(len(legacy), bool)
+            out[col] = np.where(pd.notna(new), new, np.where(legacy_ok, legacy, "Unknown"))
+    return out
+
+# ==============================================================================
 # Metadata helpers
 # ==============================================================================
 
@@ -947,7 +998,8 @@ def cbio_to_case(patients_csv_df: pd.DataFrame,
                  samples_csv_df: pd.DataFrame,
                  project_id: str,
                  strict: bool,
-                 cfg: dict) -> pd.DataFrame:
+                 cfg: dict,
+                 ontology_ann: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     dfp = patients_csv_df.rename(columns={"patientId": "submitter_id"}).copy()
 
     out = pd.DataFrame({
@@ -966,6 +1018,9 @@ def cbio_to_case(patients_csv_df: pd.DataFrame,
     except Exception:
         if strict:
             raise
+
+    # Ontology layer: concept-derived values win where resolved; legacy maps fill the rest
+    out = _apply_ontology(out, ontology_ann, cfg)
 
     return out.drop_duplicates("submitter_id").dropna(subset=["submitter_id"])
 
@@ -1249,8 +1304,9 @@ class DataModel:
                       samples_csv_df: pd.DataFrame,
                       project_id: str):
         # ---------- Build nodes ----------
+        onto_ann, onto_unmapped = _ontology_annotations(patients_csv_df, samples_csv_df, self._cfg)
         case = cbio_to_case(patients_csv_df, samples_csv_df, project_id,
-                            strict=self.strict, cfg=self._cfg)
+                            strict=self.strict, cfg=self._cfg, ontology_ann=onto_ann)
         demo = cbio_to_demographic(patients_csv_df, strict=self.strict)
         diag = cbio_to_diagnosis(patients_csv_df)
         samp = cbio_to_sample(samples_csv_df, strict=self.strict, cfg=self._cfg)
@@ -1317,6 +1373,13 @@ class DataModel:
         (self.gdm_root / "indexes").mkdir(parents=True, exist_ok=True)
         idmap.to_parquet(self.gdm_root / "indexes/idmap.parquet",
                         compression="zstd", index=False)
+
+        # Ontology layer outputs: concept codes + provenance per subject, and unresolved terms
+        if onto_ann is not None:
+            onto_ann.to_parquet(self.gdm_root / "indexes/concept_annotations.parquet",
+                                compression="zstd", index=False)
+            _write_text(self.gdm_root.parent / "metadata" / "unmapped_terms.tsv",
+                        onto_unmapped.to_csv(sep="\t", index=False))
 
         # Optional: diagnosis node table (kept lenient)
         if isinstance(diag, pd.DataFrame) and not diag.empty:

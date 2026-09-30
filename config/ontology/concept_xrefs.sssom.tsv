@@ -1,0 +1,20 @@
+# curie_map:
+#   NCIT: http://purl.obolibrary.org/obo/NCIT_
+#   SNOMEDCT: http://snomed.info/id/
+#   ICD10CM: http://hl7.org/fhir/sid/icd-10-cm/
+#   ICDO3M: https://gaipo.local/icdo3/morphology/
+#   skos: http://www.w3.org/2004/02/skos/core#
+#   semapv: https://w3id.org/semapv/vocab/
+# mapping_set_id: https://github.com/Su-informatics-lab/gaipo/config/ontology/concept_xrefs.sssom.tsv
+# mapping_set_description: Cross-references from GAIPO hub concepts (NCIt) to ICD-O-3, SNOMED CT and ICD-10-CM.
+# license: https://creativecommons.org/licenses/by/4.0/
+# mapping_date: 2026-09-30
+subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	confidence	comment
+NCIT:C3267	Wilms Tumor	skos:exactMatch	ICDO3M:8960/3	Nephroblastoma, NOS	semapv:ManualMappingCuration	1.0	Morphology used to derive GDC disease_type when the source gives only text or OncoTree
+NCIT:C3267	Wilms Tumor	skos:exactMatch	SNOMEDCT:302849000	Nephroblastoma	semapv:ManualMappingCuration	1.0	SNOMED CT US Edition
+NCIT:C3267	Wilms Tumor	skos:broadMatch	ICD10CM:C64.9	Malignant neoplasm of unspecified kidney, except renal pelvis	semapv:ManualMappingCuration	0.9	Classification bucket; C64.1 right / C64.2 left when laterality is known; extrarenal Wilms not covered
+NCIT:C4822	Malignant Glioma	skos:exactMatch	ICDO3M:9380/3	Glioma, malignant	semapv:ManualMappingCuration	1.0	
+NCIT:C3059	Glioma	skos:closeMatch	ICDO3M:9380/3	Glioma, malignant	semapv:ManualMappingCuration	0.9	ICD-O-3 codes Glioma, NOS as 9380/3
+NCIT:C3058	Glioblastoma	skos:exactMatch	ICDO3M:9440/3	Glioblastoma	semapv:ManualMappingCuration	1.0	
+NCIT:C3059	Glioma	skos:broadMatch	ICD10CM:C71.9	Malignant neoplasm of brain, unspecified	semapv:ManualMappingCuration	0.8	Valid for brain primaries only; spinal gliomas code elsewhere
+NCIT:C3058	Glioblastoma	skos:broadMatch	ICD10CM:C71.9	Malignant neoplasm of brain, unspecified	semapv:ManualMappingCuration	0.9	Sub-site codes C71.0-C71.8 when topography is known

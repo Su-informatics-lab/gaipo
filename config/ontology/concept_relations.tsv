@@ -1,0 +1,7 @@
+# Concept-to-concept relations used for inference (not mappings).
+# typical_primary_site is used ONLY when the source has no ICD-O-3 topography code.
+subject_id	subject_label	relation	object_id	object_label	source	comment
+NCIT:C3267	Wilms Tumor	typical_primary_site	NCIT:C12415	Kidney	GAIPO curation	NCIt definition: the vast majority of cases arise from the kidney
+NCIT:C3059	Glioma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	
+NCIT:C4822	Malignant Glioma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	
+NCIT:C3058	Glioblastoma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	

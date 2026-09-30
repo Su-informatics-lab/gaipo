@@ -1,0 +1,48 @@
+# config/ontology/element_map.yaml
+# Element-level mapping: which source columns feed which standard data element,
+# in priority order, and which GDC properties are filled from the resolved concept.
+# Value-level mappings live in the *.sssom.tsv files next to this file.
+
+version: 0.1.0
+hub_terminology: NCIT          # every source value resolves to an NCIt concept first
+
+elements:
+
+  disease:
+    description: Primary cancer diagnosis of the case
+    cde: {source: caDSR, id: "6161032", name: "ICD-O Primary Disease Diagnosis Type"}
+    sources:                     # first column that resolves wins (per subject)
+      - {table: patients, column: ICD_O_3_SITE,          system: ICDO3M}   # holds morphology such as "8960/3" in TARGET WT
+      - {table: samples,  column: ONCOTREE_CODE,         system: ONCOTREE}
+      - {table: samples,  column: CANCER_TYPE_DETAILED,  system: TEXT}
+      - {table: samples,  column: CANCER_TYPE,           system: TEXT}
+      - {table: patients, column: CANCER_TYPE_DETAILED,  system: TEXT}
+      - {table: patients, column: CANCER_TYPE,           system: TEXT}
+    targets:
+      - {node: case,      property: disease_type,      via: icdo3_block, cde: "caDSR 6161017"}
+      - {node: diagnosis, property: primary_diagnosis, via: ncit,        cde: "caDSR 6161032"}
+      - {node: diagnosis, property: morphology,        via: icdo3m,      cde: "caDSR 3226275"}
+
+  primary_site:
+    description: Anatomic site where the primary tumor arose
+    cde: {source: caDSR, id: "6161019", name: "ICD-O Primary Anatomic Site Category"}
+    sources:
+      - {table: samples,  column: ICD_0_3_T,    system: ICDO3T}
+      - {table: patients, column: ICD_0_3_T,    system: ICDO3T}
+      - {table: patients, column: ICD_O_3_T,    system: ICDO3T}
+      - {derive_from: disease, relation: typical_primary_site}   # fallback only
+    targets:
+      - {node: case,      property: primary_site,              via: ncit, cde: "caDSR 6161019"}
+      - {node: diagnosis, property: tissue_or_organ_of_origin, via: ncit, cde: "caDSR 6161035"}
+
+  # Documented for the next iteration (not yet wired into data_model.py):
+  sex_at_birth:
+    status: planned              # skipped by the layer until wired in
+    description: Sex assigned at birth
+    cde:   {source: caDSR, id: "7572817", name: "Person Sex at Birth Category"}
+    loinc: {code: "76689-9", name: "Sex assigned at birth", answers: {LA2-8: Male, LA3-6: Female, LA4489-6: Unknown}}
+    sources:
+      - {table: patients, column: SEX,    system: TEXT}
+      - {table: patients, column: GENDER, system: TEXT}
+    targets:
+      - {node: demographic, property: sex_at_birth, via: ncit, cde: "caDSR 7572817"}

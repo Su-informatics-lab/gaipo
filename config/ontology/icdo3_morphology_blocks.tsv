@@ -1,0 +1,7 @@
+# ICD-O-3 morphology blocks -> GDC case.disease_type (caDSR CDE 6161017, "ICD-O Disease Diagnosis Category").
+# One row per ICD-O-3 block; extend with further blocks as new cancer types are added.
+start	end	block	gdc_disease_type
+8000	8009	800	Neoplasms, NOS
+8950	8989	895-898	Complex Mixed and Stromal Neoplasms
+9380	9489	938-948	Gliomas
+9490	9529	949-952	Neuroepitheliomatous Neoplasms

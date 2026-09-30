@@ -1,0 +1,42 @@
+# curie_map:
+#   NCIT: http://purl.obolibrary.org/obo/NCIT_
+#   ONCOTREE: https://oncotree.mskcc.org/?version=oncotree_latest_stable&field=CODE&search=
+#   ICDO3M: https://gaipo.local/icdo3/morphology/
+#   ICDO3T: https://gaipo.local/icdo3/topography/
+#   GAIPOTXT: https://gaipo.local/source-term/
+#   skos: http://www.w3.org/2004/02/skos/core#
+#   semapv: https://w3id.org/semapv/vocab/
+# mapping_set_id: https://github.com/Su-informatics-lab/gaipo/config/ontology/source_terms.sssom.tsv
+# mapping_set_description: Value-level mappings from source codes and labels (cBioPortal, CCDI) to NCIt concepts.
+# object_source_version: NCIt 19.12e/20.05a codes as bound in the bundled GDC dictionary (_terms_enum.yaml)
+# license: https://creativecommons.org/licenses/by/4.0/
+# mapping_date: 2026-09-30
+subject_id	subject_label	subject_source	predicate_id	object_id	object_label	mapping_justification	confidence	comment
+ICDO3M:8960/3	Nephroblastoma, NOS	ICDO3M	skos:exactMatch	NCIT:C3267	Wilms Tumor	semapv:ManualMappingCuration	1.0	ICD-O-3 morphology; GDC binds 8960/3 to C40407 (Kidney Wilms Tumor), a child of C3267
+ICDO3M:9380/3	Glioma, malignant	ICDO3M	skos:exactMatch	NCIT:C4822	Malignant Glioma	semapv:ManualMappingCuration	1.0	Code binding taken from GDC _terms_enum.yaml
+ICDO3M:9440/3	Glioblastoma	ICDO3M	skos:exactMatch	NCIT:C3058	Glioblastoma	semapv:ManualMappingCuration	1.0	Code binding taken from GDC _terms_enum.yaml
+ONCOTREE:WT	Wilms' Tumor	ONCOTREE	skos:exactMatch	NCIT:C3267	Wilms Tumor	semapv:ManualMappingCuration	1.0	cBioPortal ONCOTREE_CODE
+ONCOTREE:GBM	Glioblastoma	ONCOTREE	skos:exactMatch	NCIT:C3058	Glioblastoma	semapv:ManualMappingCuration	1.0	cBioPortal ONCOTREE_CODE
+ONCOTREE:LGG	Low-Grade Glioma	ONCOTREE	skos:broadMatch	NCIT:C3059	Glioma	semapv:ManualMappingCuration	0.9	Source is narrower than target; grade kept in source value
+ONCOTREE:HGG	High-Grade Glioma	ONCOTREE	skos:broadMatch	NCIT:C3059	Glioma	semapv:ManualMappingCuration	0.9	Source is narrower than target; grade kept in source value
+GAIPOTXT:wilms_tumor	Wilms Tumor	TEXT	skos:exactMatch	NCIT:C3267	Wilms Tumor	semapv:ManualMappingCuration	1.0	cBio CANCER_TYPE
+GAIPOTXT:wilms_tumor_possessive	Wilms' Tumor	TEXT	skos:exactMatch	NCIT:C3267	Wilms Tumor	semapv:ManualMappingCuration	1.0	cBio CANCER_TYPE_DETAILED
+GAIPOTXT:wilms_tumour	Wilms tumour	TEXT	skos:exactMatch	NCIT:C3267	Wilms Tumor	semapv:ManualMappingCuration	1.0	British spelling
+GAIPOTXT:nephroblastoma	Nephroblastoma	TEXT	skos:exactMatch	NCIT:C3267	Wilms Tumor	semapv:ManualMappingCuration	1.0	Synonym
+GAIPOTXT:nephroblastoma_nos	Nephroblastoma, NOS	TEXT	skos:exactMatch	NCIT:C3267	Wilms Tumor	semapv:ManualMappingCuration	1.0	ICD-O-3 preferred term
+GAIPOTXT:glioma	Glioma	TEXT	skos:exactMatch	NCIT:C3059	Glioma	semapv:ManualMappingCuration	1.0	GDC binds "Glioma, NOS" to C3059
+GAIPOTXT:low_grade_glioma	Low Grade Glioma	TEXT	skos:broadMatch	NCIT:C3059	Glioma	semapv:ManualMappingCuration	0.9	Source is narrower than target
+GAIPOTXT:high_grade_glioma	High Grade Glioma	TEXT	skos:broadMatch	NCIT:C3059	Glioma	semapv:ManualMappingCuration	0.9	Source is narrower than target
+GAIPOTXT:glioblastoma	Glioblastoma	TEXT	skos:exactMatch	NCIT:C3058	Glioblastoma	semapv:ManualMappingCuration	1.0
+ICDO3T:C64.9	Kidney, NOS	ICDO3T	skos:exactMatch	NCIT:C12415	Kidney	semapv:ManualMappingCuration	1.0	ICD-O-3 topography
+ICDO3T:C65.9	Renal pelvis	ICDO3T	skos:exactMatch	NCIT:C12887	Renal Pelvis	semapv:ManualMappingCuration	1.0	Renal pelvis is its own GDC primary_site (not Kidney)
+ICDO3T:C71.0	Cerebrum	ICDO3T	skos:broadMatch	NCIT:C12439	Brain	semapv:ManualMappingCuration	1.0	Brain sub-site rolls up to Brain
+ICDO3T:C71.1	Frontal lobe	ICDO3T	skos:broadMatch	NCIT:C12439	Brain	semapv:ManualMappingCuration	1.0	Brain sub-site rolls up to Brain
+ICDO3T:C71.2	Temporal lobe	ICDO3T	skos:broadMatch	NCIT:C12439	Brain	semapv:ManualMappingCuration	1.0	Brain sub-site rolls up to Brain
+ICDO3T:C71.3	Parietal lobe	ICDO3T	skos:broadMatch	NCIT:C12439	Brain	semapv:ManualMappingCuration	1.0	Brain sub-site rolls up to Brain
+ICDO3T:C71.4	Occipital lobe	ICDO3T	skos:broadMatch	NCIT:C12439	Brain	semapv:ManualMappingCuration	1.0	Brain sub-site rolls up to Brain
+ICDO3T:C71.5	Ventricle, NOS	ICDO3T	skos:broadMatch	NCIT:C12439	Brain	semapv:ManualMappingCuration	1.0	Brain sub-site rolls up to Brain
+ICDO3T:C71.6	Cerebellum, NOS	ICDO3T	skos:broadMatch	NCIT:C12439	Brain	semapv:ManualMappingCuration	1.0	Brain sub-site rolls up to Brain
+ICDO3T:C71.7	Brain stem	ICDO3T	skos:broadMatch	NCIT:C12439	Brain	semapv:ManualMappingCuration	1.0	Brain sub-site rolls up to Brain
+ICDO3T:C71.8	Overlapping lesion of brain	ICDO3T	skos:broadMatch	NCIT:C12439	Brain	semapv:ManualMappingCuration	1.0	Brain sub-site rolls up to Brain
+ICDO3T:C71.9	Brain, NOS	ICDO3T	skos:exactMatch	NCIT:C12439	Brain	semapv:ManualMappingCuration	1.0	ICD-O-3 topography
