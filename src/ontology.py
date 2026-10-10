@@ -298,10 +298,18 @@ class OntologyLayer:
             d = resolved["disease"].get(sid, _UNRESOLVED)
             t = resolved["primary_site"].get(sid, _UNRESOLVED)
             # morphology: from the source code if that is what matched, else from the concept's xref
+            # morphology: taken from the source code when that is what matched; otherwise looked
+            # up from the concept. A looked-up code is ASSERTED (written to morphology / OMOP)
+            # only if every step was an exactMatch; a broad/close chain (e.g. "Low Grade Glioma"
+            # -> Glioma -> 9380/3) is used only to place the case in its ICD-O-3 block.
             morph = d.matched_on.split(":", 1)[1] if (d.matched_on or "").startswith("ICDO3M:") else None
+            morph_exact = morph is not None
             if morph is None and d.ok:
                 x = self.xref(d.concept_id, "ICDO3M")
-                morph = x[0] if x else None
+                if x:
+                    morph = x[0]
+                    morph_exact = d.predicate == "skos:exactMatch" and x[2] == "skos:exactMatch"
+            morph_asserted = morph if morph_exact else None
             topo = t.matched_on.split(":", 1)[1] if (t.matched_on or "").startswith("ICDO3T:") else None
             snomed = self.xref(d.concept_id, "SNOMEDCT") if d.ok else None
             icd10 = self.xref(d.concept_id, "ICD10CM") if d.ok else None
@@ -314,7 +322,8 @@ class OntologyLayer:
                 "disease_justification": d.justification,
                 "disease_source": f"{d.source_table}.{d.source_column}" if d.ok else None,
                 "disease_source_value": d.source_value if d.ok else None,
-                "icdo3_morphology": morph,
+                "icdo3_morphology": morph_asserted,
+                "icdo3_block_morphology": morph,
                 "snomedct_code": snomed[0] if snomed else None,
                 "icd10cm_code": icd10[0] if icd10 else None,
                 "icd10cm_predicate": icd10[2] if icd10 else None,
@@ -324,11 +333,11 @@ class OntologyLayer:
                 "site_predicate": t.predicate,
                 "site_source": f"{t.source_table}.{t.source_column}" if t.ok else None,
                 "icdo3_topography": topo,
-                "omop_icdo3_code": f"{morph}-{topo}" if morph and topo else None,
+                "omop_icdo3_code": f"{morph_asserted}-{topo}" if morph_asserted and topo else None,
                 # GDC values derived from concepts
                 "gdc_disease_type": self.disease_type_for_morphology(morph),
                 "gdc_primary_diagnosis": self.gdc_value(d.concept_id, "diagnosis", "primary_diagnosis"),
-                "gdc_morphology": morph if morph in self._morph_enum() else None,
+                "gdc_morphology": morph_asserted if morph_asserted in self._morph_enum() else None,
                 "gdc_primary_site": self.gdc_value(t.concept_id, "case", "primary_site"),
                 "gdc_tissue_or_organ_of_origin": self.gdc_value(t.concept_id, "diagnosis",
                                                                 "tissue_or_organ_of_origin"),

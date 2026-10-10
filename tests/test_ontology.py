@@ -50,3 +50,14 @@ def test_snomed_to_icd10cm_rules():
     assert snomed_to_icd10cm(rows, "237145004", {"248152002"})[0]["icd10cm"] == "N97.9"
     assert snomed_to_icd10cm(rows, "237145004", {"248153007"})[0]["icd10cm"] == "N46"
     assert snomed_to_icd10cm(rows, "237145004")[0]["icd10cm"] is None
+
+
+def test_broad_match_does_not_assert_morphology(onto):
+    p = pd.DataFrame({"patientId": ["G1", "G3"], "ICD_O_3_SITE": [None, "9440/3"]})
+    s = pd.DataFrame({"sampleId": ["G1-01", "G3-01"], "ONCOTREE_CODE": ["LGG", "GBM"],
+                      "ICD_0_3_T": ["C71.1", "C71.9"]})
+    a = onto.annotate_cases(p, s).set_index("subject_id")
+    assert a.loc["G1", "gdc_disease_type"] == "Gliomas"          # block-level is still right
+    assert pd.isna(a.loc["G1", "gdc_morphology"])                 # 9380/3 not asserted for LGG
+    assert pd.isna(a.loc["G1", "omop_icdo3_code"])
+    assert a.loc["G3", "omop_icdo3_code"] == "9440/3-C71.9"

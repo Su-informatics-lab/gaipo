@@ -1,13 +1,15 @@
 """
 Worked example: Wilms tumor diagnosis and primary site through the ontology layer.
 
-    python -m examples.ontology.run_example
+    python -m examples.ontology.run_example           # Wilms tumor
+    python -m examples.ontology.run_example glioma    # glioma
 
 Input is a small SYNTHETIC cBioPortal-shaped extract (examples/ontology/*.csv) with the
 spelling and coding variants seen across sources. Output: one row per subject showing the
 source value, the NCIt concept it resolved to, the cross-references, and the GDC values
 derived from the concept - next to what the legacy string maps produce.
 """
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -20,8 +22,9 @@ HERE = Path(__file__).parent
 
 
 def main() -> None:
-    patients = pd.read_csv(HERE / "clinical_patients.csv")
-    samples = pd.read_csv(HERE / "clinical_samples.csv")
+    prefix = "glioma_" if (len(sys.argv) > 1 and sys.argv[1].lower() == "glioma") else ""
+    patients = pd.read_csv(HERE / f"{prefix}clinical_patients.csv")
+    samples = pd.read_csv(HERE / f"{prefix}clinical_samples.csv")
 
     onto = OntologyLayer("config/ontology", "src/gdcdictionary/schemas")
     ann = onto.annotate_cases(patients, samples)
@@ -41,7 +44,7 @@ def main() -> None:
 
     out = HERE / "output"
     out.mkdir(exist_ok=True)
-    ann.to_csv(out / "concept_annotations.tsv", sep="\t", index=False)
+    ann.to_csv(out / f"{prefix}concept_annotations.tsv", sep="\t", index=False)
 
 
 if __name__ == "__main__":
