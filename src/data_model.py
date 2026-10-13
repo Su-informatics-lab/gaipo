@@ -256,10 +256,16 @@ def _samples_subject_ids(samples_df: pd.DataFrame) -> pd.Series:
     Return subject IDs from samples_df.
     Priority:
       1) 'subject_id' column if present
-      2) derive from 'sampleId' by stripping a trailing '-<digits>' (e.g., '-01', '-02')
+      2) 'patientId' / 'PATIENT_ID' column (written by extractor.py)
+      3) derive from 'sampleId' by stripping a trailing '-<digits>' (TARGET-style ids only)
     """
     if "subject_id" in samples_df.columns:
         return samples_df["subject_id"].astype(str)
+
+    # explicit patient id written by the extractor (needed for PBTA/CPTAC: PT_... vs BS_... ids)
+    for col in ("patientId", "PATIENT_ID"):
+        if col in samples_df.columns and samples_df[col].notna().any():
+            return samples_df[col].astype(str)
 
     if "sampleId" in samples_df.columns:
         # Robust derivation: remove final dash-number suffix if present
@@ -1150,7 +1156,10 @@ def build_idmap_from_samples(samples_csv_df: pd.DataFrame) -> pd.DataFrame:
     """
     df = samples_csv_df.rename(columns={"sampleId": "sample_id"})
     if "subject_id" not in df.columns:
-        df["subject_id"] = df["sample_id"].astype(str).map(_subject_from_sample)
+        if "patientId" in df.columns and df["patientId"].notna().any():
+            df["subject_id"] = df["patientId"].astype(str)
+        else:
+            df["subject_id"] = df["sample_id"].astype(str).map(_subject_from_sample)
     out = df[["subject_id", "sample_id"]].dropna().drop_duplicates()
     out["node_id_subject"] = "patient:" + out["subject_id"].astype(str)
     out["node_id_sample"] = "sample:" + out["sample_id"].astype(str)

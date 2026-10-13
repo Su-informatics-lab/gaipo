@@ -61,3 +61,14 @@ def test_broad_match_does_not_assert_morphology(onto):
     assert pd.isna(a.loc["G1", "gdc_morphology"])                 # 9380/3 not asserted for LGG
     assert pd.isna(a.loc["G1", "omop_icdo3_code"])
     assert a.loc["G3", "omop_icdo3_code"] == "9440/3-C71.9"
+
+
+def test_pbta_style_ids_link_through_patient_id(onto):
+    p = pd.DataFrame({"patientId": ["PT_A", "PT_B"]})
+    s = pd.DataFrame({"sampleId": ["BS_1", "BS_2"], "patientId": ["PT_A", "PT_B"],
+                      "CANCER_TYPE_DETAILED": ["Pilocytic astrocytoma", "Low-grade glioma, KIAA1549-BRAF"],
+                      "ONCOTREE_CODE": ["lggnos", "lggnos"]})
+    a = onto.annotate_cases(p, s).set_index("subject_id")
+    assert a.loc["PT_A", "disease_concept_id"] == "NCIT:C4047"       # detailed text wins over OncoTree
+    assert a.loc["PT_B", "disease_predicate"] == "skos:broadMatch"
+    assert (a.gdc_disease_type == "Gliomas").all()

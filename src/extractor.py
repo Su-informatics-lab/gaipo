@@ -41,7 +41,7 @@ One folder per source portal and study:
 
 data/fetch/cbioportal_api_request/<portal>/<ct_slug>/<study_id>/
   clinical_patients.csv                  # one row per patientId
-  clinical_samples.csv                   # one row per sampleId
+  clinical_samples.csv                   # one row per sampleId (sampleId, patientId, attributes…)
   <profileId>.tsv                        # gene × sample matrix per discovered profile
   e.g. cbio/wilms_tumor/wt_target_2018_pub/clinical_patients.csv
        pedcbio/glioma/pbta_all/clinical_patients.csv
@@ -331,6 +331,7 @@ def fetch_sample_clinical(client, study_id: str, sample_ids: list[str]) -> pd.Da
             for mdl in (out or []):
                 recs.append({
                     "sampleId": getattr(mdl, "sampleId", None),
+                    "patientId": getattr(mdl, "patientId", None),
                     "clinicalAttributeId": getattr(mdl, "clinicalAttributeId", None),
                     "value": getattr(mdl, "value", None),
                 })
@@ -348,6 +349,10 @@ def fetch_sample_clinical(client, study_id: str, sample_ids: list[str]) -> pd.Da
     dfs = (df.pivot(index="sampleId", columns="clinicalAttributeId", values="value")
              .reset_index()
              .rename_axis(None, axis=1))
+    # keep the sample -> patient link: non-TARGET studies (PBTA, CPTAC) use unrelated
+    # sample/patient ids (BS_... / PT_...), so it cannot be derived from sampleId later
+    s2p = df.dropna(subset=["patientId"]).drop_duplicates("sampleId").set_index("sampleId")["patientId"]
+    dfs.insert(1, "patientId", dfs["sampleId"].map(s2p))
     return dfs
 
 # ─── 5) Molecular profiles (client/portal aware) ───────────────────────────────

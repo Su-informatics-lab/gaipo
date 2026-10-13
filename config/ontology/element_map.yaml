@@ -11,10 +11,10 @@ elements:
   disease:
     description: Primary cancer diagnosis of the case
     cde: {source: caDSR, id: "6161032", name: "ICD-O Primary Disease Diagnosis Type"}
-    sources:                     # first column that resolves wins (per subject)
+    sources:                     # first column that resolves wins (per subject); most specific first
       - {table: patients, column: ICD_O_3_SITE,          system: ICDO3M}   # holds morphology such as "8960/3" in TARGET WT
-      - {table: samples,  column: ONCOTREE_CODE,         system: ONCOTREE}
-      - {table: samples,  column: CANCER_TYPE_DETAILED,  system: TEXT}
+      - {table: samples,  column: CANCER_TYPE_DETAILED,  system: TEXT}     # e.g. "Pilocytic astrocytoma" (PBTA)
+      - {table: samples,  column: ONCOTREE_CODE,         system: ONCOTREE} # often coarser, e.g. LGGNOS
       - {table: samples,  column: CANCER_TYPE,           system: TEXT}
       - {table: patients, column: CANCER_TYPE_DETAILED,  system: TEXT}
       - {table: patients, column: CANCER_TYPE,           system: TEXT}

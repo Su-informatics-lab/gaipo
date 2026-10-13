@@ -85,6 +85,19 @@ def parse_icdo3_topography(value: object) -> Optional[str]:
     return f"C{m.group(1)}.{m.group(2) or '9'}"
 
 
+def sample_subject_ids(samples: pd.DataFrame) -> pd.Series:
+    """
+    Patient id for each sample row. Uses an explicit patient column when the extract has one
+    (subject_id, patientId, PATIENT_ID); otherwise falls back to stripping a TARGET-style
+    '-NN' suffix from sampleId. The fallback is wrong for PBTA/CPTAC ids (PT_... / BS_...),
+    so extracts from those studies must carry patientId.
+    """
+    for col in ("subject_id", "patientId", "PATIENT_ID"):
+        if col in samples.columns and samples[col].notna().any():
+            return samples[col].astype(str)
+    return samples["sampleId"].astype(str).str.replace(r"-\d+$", "", regex=True)
+
+
 # ------------------------------------------------------------------------------
 # Result record
 # ------------------------------------------------------------------------------
@@ -282,10 +295,7 @@ class OntologyLayer:
         p = patients.copy()
         p["__subject_id"] = p[patient_id_col].astype(str)
         s = samples.copy()
-        if "subject_id" in s.columns:
-            s["__subject_id"] = s["subject_id"].astype(str)
-        else:
-            s["__subject_id"] = s["sampleId"].astype(str).str.replace(r"-\d+$", "", regex=True)
+        s["__subject_id"] = sample_subject_ids(s)
         tables = {"patients": p, "samples": s}
         subjects = pd.Index(p["__subject_id"].unique())
 

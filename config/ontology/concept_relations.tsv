@@ -5,3 +5,12 @@ NCIT:C3267	Wilms Tumor	typical_primary_site	NCIT:C12415	Kidney	GAIPO curation	NC
 NCIT:C3059	Glioma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	
 NCIT:C4822	Malignant Glioma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	
 NCIT:C3058	Glioblastoma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	
+NCIT:C4047	Pilocytic Astrocytoma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code
+NCIT:C4323	Pleomorphic Xanthoastrocytoma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code
+NCIT:C3696	Subependymal Giant Cell Astrocytoma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code
+NCIT:C60781	Astrocytoma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code
+NCIT:C3288	Oligodendroglioma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code
+NCIT:C4050	Oligoastrocytoma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code
+NCIT:C4318	Gliomatosis Cerebri	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code
+NCIT:C129309	Diffuse Midline Glioma, H3 K27M-Mutant	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code
+NCIT:C3222	Medulloblastoma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code

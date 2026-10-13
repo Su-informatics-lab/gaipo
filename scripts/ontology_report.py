@@ -61,6 +61,16 @@ def find_sources(fetch_root: Path, ct: str, portals) -> list:
     return found
 
 
+def load_groups(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    g = pd.read_csv(path, sep="\t", comment="#", dtype=str)
+    return {name: set(df.concept_id) for name, df in g.groupby("group")}
+
+
+GROUPS: dict = {}
+
+
 def summarize(onto, dm, cfg, args, patients, samples):
     ann = onto.annotate_cases(patients, samples)
     unmapped = onto.unmapped_report(patients, samples)
@@ -87,6 +97,8 @@ def summarize(onto, dm, cfg, args, patients, samples):
         "legacy_disease_type": counts(legacy_dt),
         "legacy_invalid_disease_type_n": int((~legacy_dt.isin(allowed)).sum()),
     }
+    for name, concepts in GROUPS.items():   # cohort counts from config/ontology/analysis_groups.tsv
+        row[f"group_{name}_n"] = int(ann.disease_concept_id.isin(concepts).sum())
     return row, ann, unmapped
 
 
@@ -105,6 +117,7 @@ def main() -> None:
     portals = PORTALS if args.portal == "all" else (args.portal,)
     schemas = cfg.get("schemas_dir", "src/gdcdictionary/schemas")
     onto = OntologyLayer(cfg["ontology"].get("dir", "config/ontology"), schemas)
+    GROUPS.update(load_groups(Path(cfg["ontology"].get("dir", "config/ontology")) / "analysis_groups.tsv"))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
