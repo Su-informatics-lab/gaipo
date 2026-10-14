@@ -120,8 +120,9 @@ cancer_types = cfg["cancer_type_interest"]
 TIMEOUT  = cfg.get("timeout", 60)
 
 # optional auth tokens (env overrides)
-CBIO_TOKEN = (cfg.get("auth", {}) or {}).get("cbioportal_api_token") or os.getenv("CBIOPORTAL_API_TOKEN")
-PED_TOKEN  = (cfg.get("auth", {}) or {}).get("pedcbioportal_api_token") or os.getenv("PEDCBIOPORTAL_API_TOKEN")
+# Tokens: environment variables first, so no token needs to live in config files under git
+CBIO_TOKEN = os.getenv("CBIOPORTAL_API_TOKEN") or (cfg.get("auth", {}) or {}).get("cbioportal_api_token")
+PED_TOKEN  = os.getenv("PEDCBIOPORTAL_API_TOKEN") or (cfg.get("auth", {}) or {}).get("pedcbioportal_api_token")
 
 # Raw data output (match your tree)
 OUTPUT_ROOT = ROOT / "data" / "fetch" / "cbioportal_api_request"

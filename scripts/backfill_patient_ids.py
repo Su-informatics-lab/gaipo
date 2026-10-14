@@ -14,7 +14,8 @@ the full data_extract stage.
 
 Layout: data/fetch/cbioportal_api_request/<cbio|pedcbio>/<ct_slug>/<study_id>/clinical_samples.csv
 A copy of each original file is kept as clinical_samples.csv.bak.
-Tokens: config/pipeline_config.yaml auth.* or env CBIOPORTAL_API_TOKEN / PEDCBIOPORTAL_API_TOKEN.
+Tokens: env CBIOPORTAL_API_TOKEN / PEDCBIOPORTAL_API_TOKEN (preferred: keeps tokens out of git),
+        else config/pipeline_config.yaml auth.*.
 """
 import argparse
 import os
@@ -32,10 +33,10 @@ def portal_settings(cfg: dict, portal: str):
     services, auth = cfg.get("services", {}), (cfg.get("auth", {}) or {})
     if portal == "cbio":
         base = services.get("cbioportal_api", "https://www.cbioportal.org/api")
-        token = auth.get("cbioportal_api_token") or os.getenv("CBIOPORTAL_API_TOKEN")
+        token = os.getenv("CBIOPORTAL_API_TOKEN") or auth.get("cbioportal_api_token")
     else:
         base = services.get("pedcbioportal_api", "https://pedcbioportal.kidsfirstdrc.org/api")
-        token = auth.get("pedcbioportal_api_token") or os.getenv("PEDCBIOPORTAL_API_TOKEN")
+        token = os.getenv("PEDCBIOPORTAL_API_TOKEN") or auth.get("pedcbioportal_api_token")
     headers = {"Accept": "application/json", "User-Agent": "gaipo/0.1 (+backfill_patient_ids.py)"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -88,8 +89,7 @@ def main() -> None:
                 print(f"[ok]   {sam}: patientId already present")
                 continue
             if portal == "pedcbio" and "Authorization" not in headers:
-                print(f"[warn] no PedcBioPortal token found (config auth.pedcbioportal_api_token "
-                      f"or env PEDCBIOPORTAL_API_TOKEN)")
+                print(f"[warn] no PedcBioPortal token found (set env PEDCBIOPORTAL_API_TOKEN)")
             try:
                 s2p = sample_to_patient(base, headers, study_id, timeout)
             except (PortalResponseError, requests.RequestException) as e:
