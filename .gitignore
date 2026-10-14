@@ -2,3 +2,5 @@
 examples/ontology/output/
 __pycache__/
 .pytest_cache/
+.env
+*.bak

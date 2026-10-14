@@ -8,8 +8,10 @@ services:
     environment:
       - CONFIG_PATH=/app/config/pipeline_config.yaml
       - GDC_MAPPING_PATH=/app/config/gdc_mapping.yaml
-      # Optional: tokens/keys (prefer Docker secrets if these are sensitive)
-      # - CBIOPORTAL_API_TOKEN=${CBIOPORTAL_API_TOKEN}
+      # Tokens are passed from the host environment (or a git-ignored .env file next to
+      # this file); keep auth.* in config/pipeline_config.yaml null so no token is committed.
+      - PEDCBIOPORTAL_API_TOKEN=${PEDCBIOPORTAL_API_TOKEN:-}
+      - CBIOPORTAL_API_TOKEN=${CBIOPORTAL_API_TOKEN:-}
       # - GDC_API_TOKEN=${GDC_API_TOKEN}
     volumes:
       - ./config:/app/config:ro
