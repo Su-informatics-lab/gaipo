@@ -42,11 +42,23 @@ def portal_settings(cfg: dict, portal: str):
     return base.rstrip("/"), headers
 
 
+class PortalResponseError(RuntimeError):
+    pass
+
+
 def sample_to_patient(base: str, headers: dict, study_id: str, timeout: int) -> pd.Series:
-    r = requests.get(f"{base}/studies/{study_id}/samples",
-                     params={"projection": "SUMMARY", "pageSize": 10_000_000},
-                     headers=headers, timeout=timeout)
-    r.raise_for_status()
+    url = f"{base}/studies/{study_id}/samples"
+    r = requests.get(url, params={"projection": "SUMMARY", "pageSize": 100_000},
+                     headers=headers, timeout=timeout, allow_redirects=False)
+    ctype = r.headers.get("Content-Type", "")
+    if r.is_redirect or r.status_code in (401, 403):
+        raise PortalResponseError(
+            f"HTTP {r.status_code} from {url} (redirect to: {r.headers.get('Location', '-')}). "
+            "The portal wants you to log in: the API token is missing, expired or revoked.")
+    if r.status_code != 200 or "json" not in ctype.lower():
+        raise PortalResponseError(
+            f"HTTP {r.status_code}, Content-Type '{ctype}' from {url}; expected JSON. "
+            f"First bytes: {r.text[:200]!r}")
     df = pd.DataFrame(r.json())
     if df.empty:
         return pd.Series(dtype=object)
@@ -75,10 +87,13 @@ def main() -> None:
             if has and not args.force:
                 print(f"[ok]   {sam}: patientId already present")
                 continue
+            if portal == "pedcbio" and "Authorization" not in headers:
+                print(f"[warn] no PedcBioPortal token found (config auth.pedcbioportal_api_token "
+                      f"or env PEDCBIOPORTAL_API_TOKEN)")
             try:
                 s2p = sample_to_patient(base, headers, study_id, timeout)
-            except requests.HTTPError as e:
-                print(f"[fail] {sam}: {e} (check the {portal} token)")
+            except (PortalResponseError, requests.RequestException) as e:
+                print(f"[fail] {sam}: {e}")
                 continue
             ids = samples["sampleId"].astype(str).map(s2p)
             n_miss = int(ids.isna().sum())
