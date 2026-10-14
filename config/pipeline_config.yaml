@@ -4,7 +4,7 @@
 auth:
   ccdi_api_token: null              # not needed currently
   cbioportal_api_token: null        # or set via env CBIOPORTAL_API_TOKEN
-  pedcbioportal_api_token: eyJhbGciOiJIUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICI4YWNlNDU1OS03ZDFlLTQ3YzAtOWE0ZC1mYWJiYTY4ODRmMzYifQ.eyJpYXQiOjE3NjA0OTUyOTIsImp0aSI6IjYxZWU4MmI4LWMzMjYtNDc1MS04NzBlLTYxZmVhNGU3ZDQ5MSIsImlzcyI6Imh0dHBzOi8va2V5Y2xvYWsua2lkc2ZpcnN0ZHJjLm9yZy9yZWFsbXMvcGVkY2Jpb3BvcnRhbCIsImF1ZCI6Imh0dHBzOi8va2V5Y2xvYWsua2lkc2ZpcnN0ZHJjLm9yZy9yZWFsbXMvcGVkY2Jpb3BvcnRhbCIsInN1YiI6IjEyMjAyODU2LTk0ODMtNDA2ZS04YzJkLTI3ODJkNTU0YWUyMiIsInR5cCI6Ik9mZmxpbmUiLCJhenAiOiJwZWRjYmlvcG9ydGFsLWFwaSIsInNlc3Npb25fc3RhdGUiOiI5ZGM0MTc0ZS0xZTgyLTRlZTEtYjZkOC1lMTVmYjAxMDg0OTkiLCJzY29wZSI6Im9wZW5pZCBvZmZsaW5lX2FjY2VzcyBwcm9maWxlIGVtYWlsIiwic2lkIjoiOWRjNDE3NGUtMWU4Mi00ZWUxLWI2ZDgtZTE1ZmIwMTA4NDk5In0.OBPmQasHaQy7n65qCPtUY_Ny4PmWqq9oiLSvGIK9Nuk   
+  pedcbioportal_api_token: null     # replace with your API token
 
 # 1) services (you already have these)
 services:
