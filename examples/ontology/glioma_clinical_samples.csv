@@ -1,0 +1,6 @@
+sampleId,CANCER_TYPE,CANCER_TYPE_DETAILED,ONCOTREE_CODE,ICD_0_3_T
+G1-01,Glioma,Low Grade Glioma,LGG,C71.1
+G2-01,Glioma,High Grade Glioma,HGG,C71.7
+G3-01,Glioma,Glioblastoma,GBM,C71.9
+G4-01,Glioma,Glioma,,
+G5-01,Glioma,Low Grade Glioma,,C71.6

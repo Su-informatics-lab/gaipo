@@ -1,0 +1,17 @@
+# Analysis cohorts as sets of NCIt concepts. Used by scripts/ontology_report.py to count
+# cases per cohort (e.g. the glioma cohort in the manuscript). Edit to match the study design:
+# glioneuronal tumors (ganglioglioma, DIA/DIG, DLGNT) and ependymoma are left out of "glioma" here.
+group	concept_id	concept_label
+glioma	NCIT:C3059	Glioma
+glioma	NCIT:C4822	Malignant Glioma
+glioma	NCIT:C3058	Glioblastoma
+glioma	NCIT:C4047	Pilocytic Astrocytoma
+glioma	NCIT:C4323	Pleomorphic Xanthoastrocytoma
+glioma	NCIT:C3696	Subependymal Giant Cell Astrocytoma
+glioma	NCIT:C60781	Astrocytoma
+glioma	NCIT:C3288	Oligodendroglioma
+glioma	NCIT:C4050	Oligoastrocytoma
+glioma	NCIT:C3903	Mixed Glioma
+glioma	NCIT:C4318	Gliomatosis Cerebri
+glioma	NCIT:C129309	Diffuse Midline Glioma, H3 K27M-Mutant
+wilms_tumor	NCIT:C3267	Wilms Tumor

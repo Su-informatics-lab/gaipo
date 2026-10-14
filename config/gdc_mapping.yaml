@@ -124,3 +124,11 @@ output_roots:
   fetch_root: "data/fetch"
   gdm_root:   "data/gdm"
   schemas_dir: src/gdcdictionary/schemas
+
+# ---- Ontology layer (src/ontology.py) ----
+# When enabled, case.disease_type and case.primary_site are derived from NCIt concepts
+# resolved through config/ontology/*.sssom.tsv; the gdc_mapping tables above remain the
+# fallback for any value the ontology does not resolve (listed in data/metadata/unmapped_terms.tsv).
+ontology:
+  enabled: true
+  dir: config/ontology

@@ -1,0 +1,37 @@
+# curie_map:
+#   NCIT: http://purl.obolibrary.org/obo/NCIT_
+#   SNOMEDCT: http://snomed.info/id/
+#   ICD10CM: http://hl7.org/fhir/sid/icd-10-cm/
+#   ICDO3M: https://gaipo.local/icdo3/morphology/
+#   skos: http://www.w3.org/2004/02/skos/core#
+#   semapv: https://w3id.org/semapv/vocab/
+# mapping_set_id: https://github.com/Su-informatics-lab/gaipo/config/ontology/concept_xrefs.sssom.tsv
+# mapping_set_description: Cross-references from GAIPO hub concepts (NCIt) to ICD-O-3, SNOMED CT and ICD-10-CM.
+# license: https://creativecommons.org/licenses/by/4.0/
+# mapping_date: 2026-09-30
+subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	confidence	comment
+NCIT:C3267	Wilms Tumor	skos:exactMatch	ICDO3M:8960/3	Nephroblastoma, NOS	semapv:ManualMappingCuration	1.0	Morphology used to derive GDC disease_type when the source gives only text or OncoTree
+NCIT:C3267	Wilms Tumor	skos:exactMatch	SNOMEDCT:302849000	Nephroblastoma	semapv:ManualMappingCuration	1.0	SNOMED CT US Edition
+NCIT:C3267	Wilms Tumor	skos:broadMatch	ICD10CM:C64.9	Malignant neoplasm of unspecified kidney, except renal pelvis	semapv:ManualMappingCuration	0.9	Classification bucket; C64.1 right / C64.2 left when laterality is known; extrarenal Wilms not covered
+NCIT:C4822	Malignant Glioma	skos:exactMatch	ICDO3M:9380/3	Glioma, malignant	semapv:ManualMappingCuration	1.0	
+NCIT:C3059	Glioma	skos:closeMatch	ICDO3M:9380/3	Glioma, malignant	semapv:ManualMappingCuration	0.9	ICD-O-3 codes Glioma, NOS as 9380/3
+NCIT:C3058	Glioblastoma	skos:exactMatch	ICDO3M:9440/3	Glioblastoma	semapv:ManualMappingCuration	1.0	
+NCIT:C3059	Glioma	skos:broadMatch	ICD10CM:C71.9	Malignant neoplasm of brain, unspecified	semapv:ManualMappingCuration	0.8	Valid for brain primaries only; spinal gliomas code elsewhere
+NCIT:C3058	Glioblastoma	skos:broadMatch	ICD10CM:C71.9	Malignant neoplasm of brain, unspecified	semapv:ManualMappingCuration	0.9	Sub-site codes C71.0-C71.8 when topography is known
+NCIT:C4047	Pilocytic Astrocytoma	skos:exactMatch	ICDO3M:9421/1	Pilocytic astrocytoma	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C4323	Pleomorphic Xanthoastrocytoma	skos:exactMatch	ICDO3M:9424/3	Pleomorphic xanthoastrocytoma	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C3696	Subependymal Giant Cell Astrocytoma	skos:exactMatch	ICDO3M:9384/1	Subependymal giant cell astrocytoma	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C60781	Astrocytoma	skos:exactMatch	ICDO3M:9400/3	Astrocytoma, NOS	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C3288	Oligodendroglioma	skos:exactMatch	ICDO3M:9450/3	Oligodendroglioma, NOS	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C4050	Oligoastrocytoma	skos:closeMatch	ICDO3M:9382/3	Mixed glioma	semapv:ManualMappingCuration	0.8	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C4318	Gliomatosis Cerebri	skos:exactMatch	ICDO3M:9381/3	Gliomatosis cerebri	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C3788	Ganglioglioma	skos:exactMatch	ICDO3M:9505/1	Ganglioglioma, NOS	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C3017	Ependymoma	skos:exactMatch	ICDO3M:9391/3	Ependymoma, NOS	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C3222	Medulloblastoma	skos:exactMatch	ICDO3M:9470/3	Medulloblastoma, NOS	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C3269	Schwannoma	skos:exactMatch	ICDO3M:9560/0	Schwannoma, NOS	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C3272	Neurofibroma	skos:exactMatch	ICDO3M:9540/0	Neurofibroma, NOS	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C3359	Rhabdomyosarcoma	skos:exactMatch	ICDO3M:8900/3	Rhabdomyosarcoma, NOS	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C9118	Sarcoma	skos:exactMatch	ICDO3M:8800/3	Sarcoma, NOS	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C3716	Primitive Neuroectodermal Tumor	skos:exactMatch	ICDO3M:9503/3	Neuroepithelioma, NOS	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C9476	Desmoplastic Infantile Astrocytoma	skos:exactMatch	ICDO3M:9412/1	Desmoplastic infantile astrocytoma	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C129309	Diffuse Midline Glioma, H3 K27M-Mutant	skos:exactMatch	ICDO3M:9385/3	Diffuse midline glioma, H3 K27M-mutant	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml

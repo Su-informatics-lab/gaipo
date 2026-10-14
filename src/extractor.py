@@ -22,26 +22,39 @@ What it does
 Key inputs (from config/pipeline_config.yaml)
 ---------------------------------------------
 services:
-  cbioportal_api:    https://www.cbioportal.org/api
-  cbioportal_swagger:https://www.cbioportal.org/api/v2/api-docs
+  cbioportal_api:       https://www.cbioportal.org/api
+  cbioportal_swagger:   https://www.cbioportal.org/api/v2/api-docs
+  pedcbioportal_api:    https://pedcbioportal.kidsfirstdrc.org/api
+  pedcbioportal_swagger:https://pedcbioportal.kidsfirstdrc.org/api/v2/api-docs
 cancer_type_interest: ["Wilms Tumor", ...]
-studyId:             { "Wilms Tumor": "wt_target_2018_pub", ... }
+cBio_studyId:        { "Wilms Tumor": "wt_target_2018_pub", ... }   # -> portal "cbio"
+pedcBio_studyId:     { "Glioma": "pbta_all", ... }                  # -> portal "pedcbio"
 expression_profiles: { "Wilms Tumor": [mrna, mirna, methylation], ... }
 timeout: 60
 
 Outputs
 -------
-data/fetch/cbioportal_api_request/<Cancer_Type>/
-  clinical_patients.csv
-  clinical_samples.csv
+One folder per source portal and study:
+  <portal>  = cbio     (study listed in cBio_studyId,    fetched from the cBioPortal API)
+            | pedcbio  (study listed in pedcBio_studyId, fetched from the PedcBioPortal API)
+  <ct_slug> = cancer type in lower case with underscores ("Wilms Tumor" -> wilms_tumor)
+
+data/fetch/cbioportal_api_request/<portal>/<ct_slug>/<study_id>/
+  clinical_patients.csv                  # one row per patientId
+  clinical_samples.csv                   # one row per sampleId (sampleId, patientId, attributes…)
   <profileId>.tsv                        # gene × sample matrix per discovered profile
+  e.g. cbio/wilms_tumor/wt_target_2018_pub/clinical_patients.csv
+       pedcbio/glioma/pbta_all/clinical_patients.csv
 data/gdm/clinical/
-  clinical_subjects.parquet              # patient-level fields
-  clinical_samples.parquet               # sample-level fields
+  clinical_subjects__<portal>__<ct_slug>__<study_id>.parquet   # patient-level fields
+  clinical_samples__<portal>__<ct_slug>__<study_id>.parquet    # sample-level fields
 data/gdm/features/
-  mrna.zarr, mirna.zarr, methylation.zarr  (when profile recognized)
+  <name>__<portal>__<ct_slug>__<study_id>.zarr   name = mrna | mirna | methylation | linear_cna
 data/gdm/indexes/
-  mrna_rows.parquet, mrna_cols.parquet, ... (row/col indices for feature stores)
+  <name>__<portal>__<ct_slug>__<study_id>__{rows,cols}.parquet  (row/col indices for feature stores)
+
+The data_model stage (src/data_model.py: build_data_model) reads the clinical CSVs from
+these same <portal>/<ct_slug>/<study_id>/ folders.
 
 Environment
 -----------
@@ -107,8 +120,9 @@ cancer_types = cfg["cancer_type_interest"]
 TIMEOUT  = cfg.get("timeout", 60)
 
 # optional auth tokens (env overrides)
-CBIO_TOKEN = (cfg.get("auth", {}) or {}).get("cbioportal_api_token") or os.getenv("CBIOPORTAL_API_TOKEN")
-PED_TOKEN  = (cfg.get("auth", {}) or {}).get("pedcbioportal_api_token") or os.getenv("PEDCBIOPORTAL_API_TOKEN")
+# Tokens: environment variables first, so no token needs to live in config files under git
+CBIO_TOKEN = os.getenv("CBIOPORTAL_API_TOKEN") or (cfg.get("auth", {}) or {}).get("cbioportal_api_token")
+PED_TOKEN  = os.getenv("PEDCBIOPORTAL_API_TOKEN") or (cfg.get("auth", {}) or {}).get("pedcbioportal_api_token")
 
 # Raw data output (match your tree)
 OUTPUT_ROOT = ROOT / "data" / "fetch" / "cbioportal_api_request"
@@ -318,6 +332,7 @@ def fetch_sample_clinical(client, study_id: str, sample_ids: list[str]) -> pd.Da
             for mdl in (out or []):
                 recs.append({
                     "sampleId": getattr(mdl, "sampleId", None),
+                    "patientId": getattr(mdl, "patientId", None),
                     "clinicalAttributeId": getattr(mdl, "clinicalAttributeId", None),
                     "value": getattr(mdl, "value", None),
                 })
@@ -335,6 +350,10 @@ def fetch_sample_clinical(client, study_id: str, sample_ids: list[str]) -> pd.Da
     dfs = (df.pivot(index="sampleId", columns="clinicalAttributeId", values="value")
              .reset_index()
              .rename_axis(None, axis=1))
+    # keep the sample -> patient link: non-TARGET studies (PBTA, CPTAC) use unrelated
+    # sample/patient ids (BS_... / PT_...), so it cannot be derived from sampleId later
+    s2p = df.dropna(subset=["patientId"]).drop_duplicates("sampleId").set_index("sampleId")["patientId"]
+    dfs.insert(1, "patientId", dfs["sampleId"].map(s2p))
     return dfs
 
 # ─── 5) Molecular profiles (client/portal aware) ───────────────────────────────

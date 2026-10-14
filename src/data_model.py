@@ -18,12 +18,18 @@ What it does
 
 Inputs
 ------
-- Clinical CSVs written by extractor:
-    data/fetch/cbioportal_api_request/<Cancer_Type>/
+- Clinical CSVs written by extractor, one folder per source portal and study:
+    data/fetch/cbioportal_api_request/<portal>/<ct_slug>/<study_id>/
       clinical_patients.csv, clinical_samples.csv
+    portal  = cbio     (cBioPortal API,    e.g. cbio/wilms_tumor/wt_target_2018_pub/)
+            | pedcbio  (PedcBioPortal API, e.g. pedcbio/glioma/pbta_all/)
+    ct_slug = cancer type in lower case with underscores ("Wilms Tumor" -> wilms_tumor)
+    Every <portal>/<ct_slug>/<study_id>/ folder found for the cancer types in
+    gdc_mapping.yaml:cancer_type_interest is processed. (The old flat layout
+    data/fetch/cbioportal_api_request/<Cancer_Type>/ is still read as a fallback.)
 - Feature stores / indexes (optional; from extractor):
-    data/gdm/features/*.zarr
-    data/gdm/indexes/*_{rows,cols}.parquet
+    data/gdm/features/<name>__<portal>__<ct_slug>__<study_id>.zarr
+    data/gdm/indexes/<name>__<portal>__<ct_slug>__<study_id>__{rows,cols}.parquet
 - Config: config/gdc_mapping.yaml
     project_id: WILMS_TUMOR_CBIO      # stamped on 'case' and 'file'
     schemas_dir: src/gdcdictionary/schemas
@@ -34,6 +40,11 @@ Inputs
 
 Outputs (under gdm_root)
 ------------------------
+by_source/<portal>/<ct_slug>/<study_id>/      # one bundle per source; same layout as below
+  clinical/  nodes/  indexes/
+indexes/source_manifest.parquet               # case submitter_id -> cancer_type, portal, study_id
+
+Project-level tables (union of all by_source bundles; a patient present in both portals is kept once):
 clinical/
   clinical_subjects.parquet
   clinical_samples.parquet
@@ -47,11 +58,14 @@ indexes/
   idmap.parquet
   links_sample_case.parquet
   links_demographic_case.parquet
+  concept_annotations.parquet  # ontology layer: concept codes + provenance per subject
 files/
   file.parquet                # minimal 'file' node rows for features
   file_full.parquet           # richer analytics view with sizes/md5
 features/
-  mrna.zarr, mirna.zarr, methylation.zarr  # (if present; not created here)
+  <name>__<portal>__<ct_slug>__<study_id>.zarr  # written by extractor; registered in files/
+../metadata/                  # data/metadata/: validation_report.*, provenance, *_examples.json,
+                              # unmapped_terms.tsv (all sources) and by_source/.../unmapped_terms.tsv
 
 DuckDB TEMP VIEWs (non-reserved names)
 --------------------------------------
@@ -62,6 +76,8 @@ gdc_demographic     → nodes/demographic.parquet
 gdc_diagnosis       → nodes/diagnosis.parquet
 links_sample_case   → indexes/links_sample_case.parquet
 links_demographic_case → indexes/links_demographic_case.parquet
+source_manifest     → indexes/source_manifest.parquet   (case -> cancer_type, portal, study_id)
+concept_annotations → indexes/concept_annotations.parquet
 idmap, nodes, files, and feature index views if present
 
 Validation modes
@@ -86,11 +102,11 @@ CLI / Pipeline
     python -m src.main --call data_model
   (Runs `build_data_model()` for all cancer types listed in config and then attaches views.)
 
-- Ad-hoc demo:
+- Ad-hoc demo (one source folder):
     python -m src.data_model \
       --schemas-dir src/gdcdictionary/schemas \
       --gdm-root data/gdm \
-      --cbio-dir data/fetch/cbioportal_api_request/Wilms_Tumor \
+      --cbio-dir data/fetch/cbioportal_api_request/cbio/wilms_tumor/wt_target_2018_pub \
       --project-id WILMS_TUMOR_CBIO
 
 Ad-hoc SQL (via pipeline data_query)
@@ -240,10 +256,16 @@ def _samples_subject_ids(samples_df: pd.DataFrame) -> pd.Series:
     Return subject IDs from samples_df.
     Priority:
       1) 'subject_id' column if present
-      2) derive from 'sampleId' by stripping a trailing '-<digits>' (e.g., '-01', '-02')
+      2) 'patientId' / 'PATIENT_ID' column (written by extractor.py)
+      3) derive from 'sampleId' by stripping a trailing '-<digits>' (TARGET-style ids only)
     """
     if "subject_id" in samples_df.columns:
         return samples_df["subject_id"].astype(str)
+
+    # explicit patient id written by the extractor (needed for PBTA/CPTAC: PT_... vs BS_... ids)
+    for col in ("patientId", "PATIENT_ID"):
+        if col in samples_df.columns and samples_df[col].notna().any():
+            return samples_df[col].astype(str)
 
     if "sampleId" in samples_df.columns:
         # Robust derivation: remove final dash-number suffix if present
@@ -512,6 +534,57 @@ def _clinical_days_to_death(os_days: Optional[pd.Series], os_status: Optional[pd
     days = pd.to_numeric(os_days, errors="coerce")
     out = pd.Series([None] * len(days), index=days.index, dtype=object)
     out[dead] = days[dead]
+    return out
+
+# ==============================================================================
+# Ontology layer hook (config: gdc_mapping.yaml -> ontology.enabled)
+# ==============================================================================
+
+_ONTOLOGY_CACHE: Dict[Tuple[str, str], Any] = {}
+
+def _get_ontology(cfg: dict):
+    from src.ontology import OntologyLayer
+    ocfg = (cfg or {}).get("ontology", {}) or {}
+    key = (str(ocfg.get("dir", "config/ontology")),
+           str((cfg or {}).get("schemas_dir", "src/gdcdictionary/schemas")))
+    if key not in _ONTOLOGY_CACHE:
+        _ONTOLOGY_CACHE[key] = OntologyLayer(*key)
+    return _ONTOLOGY_CACHE[key]
+
+def _ontology_annotations(patients_df: pd.DataFrame,
+                          samples_df: pd.DataFrame,
+                          cfg: dict) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+    """
+    Concept-based annotation of each subject (see src/ontology.py), plus the source values
+    that did not resolve. Returns (None, None) when the ontology layer is disabled, so the
+    legacy string maps stay in charge.
+    """
+    ocfg = (cfg or {}).get("ontology", {}) or {}
+    if not ocfg.get("enabled", False):
+        return None, None
+    onto = _get_ontology(cfg)
+    pid = "patientId" if "patientId" in patients_df.columns else "submitter_id"
+    ann = onto.annotate_cases(patients_df, samples_df, patient_id_col=pid)
+    unmapped = onto.unmapped_report(patients_df, samples_df, patient_id_col=pid)
+    return ann, unmapped
+
+def _apply_ontology(out: pd.DataFrame, ann: Optional[pd.DataFrame], cfg: dict) -> pd.DataFrame:
+    """
+    Concept-derived values win where the ontology resolved them. Elsewhere the legacy value is
+    kept if it is a valid GDC enum, otherwise set to 'Unknown' (the source value is listed in
+    data/metadata/unmapped_terms.tsv for curation instead of failing validation).
+    """
+    if ann is None or ann.empty:
+        return out
+    onto = _get_ontology(cfg)
+    a = ann.set_index("subject_id").reindex(out["submitter_id"].astype(str))
+    for col, src in (("disease_type", "gdc_disease_type"), ("primary_site", "gdc_primary_site")):
+        if col in out.columns:
+            new = a[src].to_numpy()
+            legacy = out[col].to_numpy()
+            allowed = set(onto.gdc_enum("case", col))
+            legacy_ok = np.array([v in allowed for v in legacy]) if allowed else np.ones(len(legacy), bool)
+            out[col] = np.where(pd.notna(new), new, np.where(legacy_ok, legacy, "Unknown"))
     return out
 
 # ==============================================================================
@@ -947,7 +1020,8 @@ def cbio_to_case(patients_csv_df: pd.DataFrame,
                  samples_csv_df: pd.DataFrame,
                  project_id: str,
                  strict: bool,
-                 cfg: dict) -> pd.DataFrame:
+                 cfg: dict,
+                 ontology_ann: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     dfp = patients_csv_df.rename(columns={"patientId": "submitter_id"}).copy()
 
     out = pd.DataFrame({
@@ -966,6 +1040,9 @@ def cbio_to_case(patients_csv_df: pd.DataFrame,
     except Exception:
         if strict:
             raise
+
+    # Ontology layer: concept-derived values win where resolved; legacy maps fill the rest
+    out = _apply_ontology(out, ontology_ann, cfg)
 
     return out.drop_duplicates("submitter_id").dropna(subset=["submitter_id"])
 
@@ -1040,8 +1117,10 @@ def cbio_to_clinical(patients_csv_df: pd.DataFrame) -> pd.DataFrame:
     case_id = df["case_submitter_id"].astype(str)
 
     # Numeric sources
-    age_days = pd.to_numeric(df.get("AGE_IN_DAYS"), errors="coerce")
-    os_days  = pd.to_numeric(df.get("OS_DAYS"), errors="coerce")
+    # columns can be absent in some studies (e.g. PedcBioPortal): fall back to all-NaN columns
+    _nan = pd.Series(np.nan, index=df.index)
+    age_days = pd.to_numeric(df.get("AGE_IN_DAYS", _nan), errors="coerce")
+    os_days  = pd.to_numeric(df.get("OS_DAYS", _nan), errors="coerce")
     os_stat  = df.get("OS_STATUS")
 
     # days_to_death only when deceased
@@ -1077,7 +1156,10 @@ def build_idmap_from_samples(samples_csv_df: pd.DataFrame) -> pd.DataFrame:
     """
     df = samples_csv_df.rename(columns={"sampleId": "sample_id"})
     if "subject_id" not in df.columns:
-        df["subject_id"] = df["sample_id"].astype(str).map(_subject_from_sample)
+        if "patientId" in df.columns and df["patientId"].notna().any():
+            df["subject_id"] = df["patientId"].astype(str)
+        else:
+            df["subject_id"] = df["sample_id"].astype(str).map(_subject_from_sample)
     out = df[["subject_id", "sample_id"]].dropna().drop_duplicates()
     out["node_id_subject"] = "patient:" + out["subject_id"].astype(str)
     out["node_id_sample"] = "sample:" + out["sample_id"].astype(str)
@@ -1086,7 +1168,8 @@ def build_idmap_from_samples(samples_csv_df: pd.DataFrame) -> pd.DataFrame:
 def files_for_zarr(features_dir: Path, project_id: str) -> pd.DataFrame:
     """
     Build a minimal 'file' node table for Zarr feature stores in data/gdm/features/.
-    One row per store (mrna/mirna/methylation/scrna/scatac).
+    One row per store: <name>__<portal>__<ct_slug>__<study_id>.zarr as written by
+    src/extractor.py (or a legacy <name>.zarr), name in mrna/mirna/methylation/scrna/scatac.
     """
     features = []
     mapping = {
@@ -1097,15 +1180,16 @@ def files_for_zarr(features_dir: Path, project_id: str) -> pd.DataFrame:
         "scatac": ("Epigenomics", "Chromatin Accessibility", "Single-Cell ATAC-Seq"),
     }
     for name, (cat, dtype, strat) in mapping.items():
-        z = features_dir / f"{name}.zarr"
-        if z.exists():
+        # legacy '<name>.zarr' and per-study '<name>__<portal>__<ct_slug>__<study_id>.zarr' (extractor)
+        stores = sorted(set(features_dir.glob(f"{name}.zarr")) | set(features_dir.glob(f"{name}__*.zarr")))
+        for z in stores:
             features.append({
-                "submitter_id": f"{project_id}:{name}.zarr",
+                "submitter_id": f"{project_id}:{z.name}",
                 "data_category": cat,
                 "data_type": dtype,
                 "experimental_strategy": strat,
                 "platform": "local-zarr",
-                "file_name": f"{name}.zarr",
+                "file_name": z.name,
                 "project_id": project_id
             })
     return pd.DataFrame(features)
@@ -1247,10 +1331,23 @@ class DataModel:
     def write_case_bundle(self,
                       patients_csv_df: pd.DataFrame,
                       samples_csv_df: pd.DataFrame,
-                      project_id: str):
+                      project_id: str,
+                      out_root: Optional[Union[str, Path]] = None):
+        """
+        Build, validate and write the node tables for ONE clinical source.
+        out_root: where to write {clinical,nodes,indexes}/ (default: self.gdm_root).
+        build_data_model() passes data/gdm/by_source/<portal>/<cancer_type>/<study_id>/
+        so that sources never overwrite each other.
+        """
+        root = Path(out_root) if out_root is not None else self.gdm_root
+        try:
+            meta_dir = self.gdm_root.parent / "metadata" / root.relative_to(self.gdm_root)
+        except ValueError:
+            meta_dir = self.gdm_root.parent / "metadata"
         # ---------- Build nodes ----------
+        onto_ann, onto_unmapped = _ontology_annotations(patients_csv_df, samples_csv_df, self._cfg)
         case = cbio_to_case(patients_csv_df, samples_csv_df, project_id,
-                            strict=self.strict, cfg=self._cfg)
+                            strict=self.strict, cfg=self._cfg, ontology_ann=onto_ann)
         demo = cbio_to_demographic(patients_csv_df, strict=self.strict)
         diag = cbio_to_diagnosis(patients_csv_df)
         samp = cbio_to_sample(samples_csv_df, strict=self.strict, cfg=self._cfg)
@@ -1273,14 +1370,14 @@ class DataModel:
             self.validate_node("clinical", clin_for_validate)
 
         # ---------- Persist legacy clinical mirrors ----------
-        (self.gdm_root / "clinical").mkdir(parents=True, exist_ok=True)
-        case.to_parquet(self.gdm_root / "clinical/clinical_subjects.parquet",
+        (root / "clinical").mkdir(parents=True, exist_ok=True)
+        case.to_parquet(root / "clinical/clinical_subjects.parquet",
                         compression="zstd", index=False)
-        samp.to_parquet(self.gdm_root / "clinical/clinical_samples.parquet",
+        samp.to_parquet(root / "clinical/clinical_samples.parquet",
                         compression="zstd", index=False)
 
         # ---------- Persist node tables ----------
-        nroot = self.gdm_root / "nodes"
+        nroot = root / "nodes"
         nroot.mkdir(parents=True, exist_ok=True)
 
         case.to_parquet(nroot / "case.parquet", compression="zstd", index=False)
@@ -1291,8 +1388,8 @@ class DataModel:
             links_demo = demo[["submitter_id", "case_submitter_id"]].rename(
                 columns={"submitter_id": "demographic_submitter_id"}
             )
-            (self.gdm_root / "indexes").mkdir(parents=True, exist_ok=True)
-            links_demo.to_parquet(self.gdm_root / "indexes/links_demographic_case.parquet",
+            (root / "indexes").mkdir(parents=True, exist_ok=True)
+            links_demo.to_parquet(root / "indexes/links_demographic_case.parquet",
                                 compression="zstd", index=False)
 
         if not samp_for_validate.empty:
@@ -1301,7 +1398,7 @@ class DataModel:
             links_samp = samp[["submitter_id", "case_submitter_id"]].rename(
                 columns={"submitter_id": "sample_submitter_id"}
             )
-            links_samp.to_parquet(self.gdm_root / "indexes/links_sample_case.parquet",
+            links_samp.to_parquet(root / "indexes/links_sample_case.parquet",
                                 compression="zstd", index=False)
 
         if not clin_for_validate.empty:
@@ -1310,13 +1407,20 @@ class DataModel:
             links_clin = clin[["submitter_id", "case_submitter_id"]].rename(
                 columns={"submitter_id": "clinical_submitter_id"}
             )
-            links_clin.to_parquet(self.gdm_root / "indexes/links_clinical_case.parquet",
+            links_clin.to_parquet(root / "indexes/links_clinical_case.parquet",
                                 compression="zstd", index=False)
 
         # ---------- Indexes ----------
-        (self.gdm_root / "indexes").mkdir(parents=True, exist_ok=True)
-        idmap.to_parquet(self.gdm_root / "indexes/idmap.parquet",
+        (root / "indexes").mkdir(parents=True, exist_ok=True)
+        idmap.to_parquet(root / "indexes/idmap.parquet",
                         compression="zstd", index=False)
+
+        # Ontology layer outputs: concept codes + provenance per subject, and unresolved terms
+        if onto_ann is not None:
+            onto_ann.to_parquet(root / "indexes/concept_annotations.parquet",
+                                compression="zstd", index=False)
+            _write_text(meta_dir / "unmapped_terms.tsv",
+                        onto_unmapped.to_csv(sep="\t", index=False))
 
         # Optional: diagnosis node table (kept lenient)
         if isinstance(diag, pd.DataFrame) and not diag.empty:
@@ -1335,7 +1439,7 @@ class DataModel:
                 "label": samp["submitter_id"].astype(str)
             })
         ], ignore_index=True)
-        nodes.to_parquet(self.gdm_root / "nodes/nodes.parquet",
+        nodes.to_parquet(root / "nodes/nodes.parquet",
                         compression="zstd", index=False)
 
         # ---------- Return frames for metadata/reporting ----------
@@ -1346,6 +1450,7 @@ class DataModel:
             "diagnosis": diag if isinstance(diag, pd.DataFrame) else pd.DataFrame(),
             "clinical": clin_for_validate,
             "idmap": idmap,
+            "unmapped": onto_unmapped if onto_unmapped is not None else pd.DataFrame(),
         }
 
     def write_files_for_features(self, project_id: str):
@@ -1531,7 +1636,7 @@ class DataModel:
             node = r["node"]
             rows = r["rows"]
             errn = len(r["errors"])
-            lines.append(f"## {node}")
+            lines.append(f"## {node}" + (f" ({r['source']})" if r.get("source") else ""))
             lines.append(f"- Rows: {rows}")
             lines.append(f"- Errors: {errn}")
             if errn:
@@ -1565,6 +1670,8 @@ class DataModel:
             "methyl_cols":     self.gdm_root / "indexes/methyl_cols.parquet",
             "gdc_clinical":   self.gdm_root / "nodes/clinical.parquet",
             "links_clinical_case": self.gdm_root / "indexes/links_clinical_case.parquet",
+            "source_manifest": self.gdm_root / "indexes/source_manifest.parquet",
+            "concept_annotations": self.gdm_root / "indexes/concept_annotations.parquet",
         }
 
         for view_name, p in reg.items():
@@ -1602,73 +1709,172 @@ def _cfg_load(path: Optional[str] = None) -> dict:
     except FileNotFoundError:
         return {}
 
-def _ct_dir(root: Path, ct: str) -> Path:
-    return root / ct.replace(" ", "_")
+PORTALS = ("cbio", "pedcbio")
+
+
+def _ct_slug(ct: str) -> str:
+    """'Wilms Tumor' -> 'wilms_tumor' (the folder name src/extractor.py writes)."""
+    return ct.replace(" ", "_").lower()
+
+
+def discover_clinical_sources(fetch_root: Union[str, Path],
+                              cancer_types: Iterable[str],
+                              portals: Iterable[str] = PORTALS) -> List[dict]:
+    """
+    Find the clinical CSVs written by src/extractor.py:
+
+        <fetch_root>/<portal>/<ct_slug>/<study_id>/clinical_patients.csv
+        <fetch_root>/<portal>/<ct_slug>/<study_id>/clinical_samples.csv
+
+    portal is 'cbio' (cBioPortal API) or 'pedcbio' (PedcBioPortal API). The cancer-type
+    folder is matched case-insensitively; a folder without the <study_id> level is accepted
+    (study_id = '_'). The old flat layout <fetch_root>/<Cancer_Type>/ is used only as a
+    fallback, with a warning.
+    """
+    fetch_root = Path(fetch_root)
+    found: List[dict] = []
+    for ct in cancer_types:
+        slug = _ct_slug(ct)
+        n_before = len(found)
+        for portal in portals:
+            pdir = fetch_root / portal
+            if not pdir.is_dir():
+                continue
+            for ct_dir in sorted(p for p in pdir.iterdir() if p.is_dir() and p.name.lower() == slug):
+                for pat in sorted(ct_dir.rglob("clinical_patients.csv")):
+                    if not (pat.parent / "clinical_samples.csv").exists():
+                        continue
+                    found.append({
+                        "cancer_type": ct, "portal": portal, "ct_slug": slug,
+                        "study_id": pat.parent.name if pat.parent != ct_dir else "_",
+                        "dir": pat.parent,
+                    })
+        if len(found) == n_before:
+            legacy = fetch_root / ct.replace(" ", "_")
+            if (legacy / "clinical_patients.csv").exists() and (legacy / "clinical_samples.csv").exists():
+                print(f"[data_model] WARN {ct}: using legacy flat layout {legacy}; "
+                      f"expected {fetch_root}/<cbio|pedcbio>/{slug}/<study_id>/")
+                found.append({"cancer_type": ct, "portal": "legacy", "ct_slug": slug,
+                              "study_id": "_", "dir": legacy})
+    return found
+
+
+def _merge_source_tables(gdm_root: Path, source_roots: List[Path]) -> None:
+    """
+    Project-level tables under data/gdm/{clinical,nodes,indexes}/ = union of the per-source
+    tables under data/gdm/by_source/..., one row per record (a patient present in both
+    portals is kept once; data/gdm/indexes/source_manifest.parquet keeps every source).
+    """
+    dedupe_key = {"concept_annotations.parquet": "subject_id"}
+    for sub in ("clinical", "nodes", "indexes"):
+        names = sorted({p.name for r in source_roots for p in (r / sub).glob("*.parquet")})
+        for name in names:
+            parts = [pd.read_parquet(r / sub / name) for r in source_roots if (r / sub / name).exists()]
+            parts = [p for p in parts if not p.empty]
+            if not parts:
+                continue
+            df = pd.concat(parts, ignore_index=True)
+            key = dedupe_key.get(name) or next((k for k in ("submitter_id", "node_id") if k in df.columns), None)
+            try:
+                df = df.drop_duplicates(subset=[key] if key else None)
+            except TypeError:          # unhashable cells (e.g. link dicts) and no key column
+                pass
+            (gdm_root / sub).mkdir(parents=True, exist_ok=True)
+            df.to_parquet(gdm_root / sub / name, compression="zstd", index=False)
+
 
 def build_data_model(
     project_id: Optional[str] = None,
     schemas_dir: Optional[str] = None,
     gdm_root: Optional[str] = None,
     strict: Optional[bool] = None,
+    fetch_root: Optional[str] = None,
     ) -> None:
+    """
+    Pipeline stage 'data_model'.
+
+    Reads   data/fetch/cbioportal_api_request/<portal>/<ct_slug>/<study_id>/clinical_{patients,samples}.csv
+    Writes  data/gdm/by_source/<portal>/<ct_slug>/<study_id>/{clinical,nodes,indexes}/   (one bundle per source)
+            data/gdm/{clinical,nodes,indexes}/                                         (union of all sources)
+            data/gdm/indexes/source_manifest.parquet                                   (case -> cancer type, portal, study)
+            data/metadata/                                                             (validation + provenance)
+    """
     cfg = _cfg_load()
     schemas_dir = schemas_dir or cfg.get("schemas_dir", "src/gdcdictionary/schemas")
     gdm_root = gdm_root or cfg.get("gdm_root", "data/gdm")
     project_id = project_id or cfg.get("project_id", "wt_target_gdc")
     strict = strict if strict is not None else _env_flag("DM_GDC_STRICT", default=False)
 
-    cbio_root = Path("data") / "fetch" / "cbioportal_api_request"
+    fetch_root = Path(fetch_root) if fetch_root else (
+        Path((cfg.get("output_roots", {}) or {}).get("fetch_root", "data/fetch")) / "cbioportal_api_request")
     cancer_types = cfg.get("cancer_type_interest", []) or []
-    print(cancer_types)
+    sources = discover_clinical_sources(fetch_root, cancer_types)
+    print(f"[data_model] cancer types: {cancer_types}; {len(sources)} clinical source(s) under {fetch_root}")
+    for src in sources:
+        print(f"   - {src['cancer_type']} | {src['portal']} | {src['study_id']} | {src['dir']}")
 
     with DataModel(
         schemas_dir=schemas_dir,
         gdm_root=gdm_root,
         strict=strict,
     ) as dm:
-        any_written = False
         all_reports = []
         provenance_sources = []
-        file_node_df = pd.DataFrame()  # <-- define once, outside loop
+        source_roots: List[Path] = []
+        manifest_parts = []
+        unmapped_parts = []
+        file_node_df = pd.DataFrame()
 
-        for ct in cancer_types:
-            cbio_dir = _ct_dir(cbio_root, ct)
-            pat_csv = cbio_dir / "clinical_patients.csv"
-            sam_csv = cbio_dir / "clinical_samples.csv"
-            if not pat_csv.exists() or not sam_csv.exists():
-                print(f"[data_model] SKIP {ct}: missing {pat_csv} or {sam_csv}")
-                continue
-
+        for src in sources:
+            ct, portal, slug, study_id = src["cancer_type"], src["portal"], src["ct_slug"], src["study_id"]
+            pat_csv = src["dir"] / "clinical_patients.csv"
+            sam_csv = src["dir"] / "clinical_samples.csv"
             patients = pd.read_csv(pat_csv)
             samples = pd.read_csv(sam_csv)
+            label = f"{portal}/{slug}/{study_id}"
 
-            node_frames = dm.write_case_bundle(patients, samples, project_id=project_id)
-            any_written = True
+            out_root = dm.gdm_root / "by_source" / portal / slug / study_id
+            node_frames = dm.write_case_bundle(patients, samples, project_id=project_id, out_root=out_root)
+            source_roots.append(out_root)
 
-            # per-node validation reports (non-raising)
-            rep_case = dm.validate_df_report("case", node_frames["case"], dm.schemas.required_fields_for("case"))
-            rep_demo = dm.validate_df_report("demographic", node_frames["demographic"],
-                                             dm.schemas.required_fields_for("demographic")) if not node_frames["demographic"].empty else {"node":"demographic","rows":0,"errors":[]}
-            rep_samp = dm.validate_df_report("sample", node_frames["sample"],
-                                             dm.schemas.required_fields_for("sample")) if not node_frames["sample"].empty else {"node":"sample","rows":0,"errors":[]}
-            rep_diag = {"node":"diagnosis","rows":int(len(node_frames["diagnosis"])), "errors": []}  # lenient
-            rep_clin = dm.validate_df_report("clinical", node_frames["clinical"],
-                                 dm.schemas.required_fields_for("clinical")) \
-                       if not node_frames["clinical"].empty else {"node":"clinical","rows":0,"errors":[]}
-            all_reports.extend([rep_case, rep_demo, rep_samp, rep_diag, rep_clin])
+            # per-node validation reports (non-raising), tagged with their source
+            reps = [
+                dm.validate_df_report("case", node_frames["case"], dm.schemas.required_fields_for("case")),
+                dm.validate_df_report("demographic", node_frames["demographic"],
+                                      dm.schemas.required_fields_for("demographic"))
+                if not node_frames["demographic"].empty else {"node": "demographic", "rows": 0, "errors": []},
+                dm.validate_df_report("sample", node_frames["sample"],
+                                      dm.schemas.required_fields_for("sample"))
+                if not node_frames["sample"].empty else {"node": "sample", "rows": 0, "errors": []},
+                {"node": "diagnosis", "rows": int(len(node_frames["diagnosis"])), "errors": []},  # lenient
+                dm.validate_df_report("clinical", node_frames["clinical"],
+                                      dm.schemas.required_fields_for("clinical"))
+                if not node_frames["clinical"].empty else {"node": "clinical", "rows": 0, "errors": []},
+            ]
+            for r in reps:
+                r["source"] = label
+            all_reports.extend(reps)
+
+            manifest_parts.append(pd.DataFrame({
+                "submitter_id": node_frames["case"]["submitter_id"].astype(str),
+                "cancer_type": ct, "portal": portal, "study_id": study_id,
+            }))
+            if not node_frames["unmapped"].empty:
+                unmapped_parts.append(node_frames["unmapped"].assign(
+                    cancer_type=ct, portal=portal, study_id=study_id))
 
             provenance_sources.append({
                 "cancer_type": ct,
-                "cbioportal_dir": str(cbio_dir),
+                "portal": portal,                       # cbio = cBioPortal API, pedcbio = PedcBioPortal API
+                "study_id": study_id,
+                "clinical_dir": str(src["dir"]),
                 "clinical_patients_csv": str(pat_csv),
                 "clinical_samples_csv": str(sam_csv),
-                "row_counts": {
-                    "patients": int(len(patients)),
-                    "samples": int(len(samples))
-                }
+                "gdm_bundle": str(out_root),
+                "row_counts": {"patients": int(len(patients)), "samples": int(len(samples))},
             })
 
-            # ---- dump consolidated human-readable examples per cancer ----
+            # ---- human-readable examples per source ----
             dm.dump_example_rows(
                 dm.gdm_root.parent / "metadata",
                 {
@@ -1677,15 +1883,24 @@ def build_data_model(
                     "sample":      node_frames["sample"],
                     "diagnosis":   node_frames["diagnosis"],
                     "clinical":    node_frames["clinical"],
-                    "file":        pd.DataFrame(),  # file examples added after loop (project-level)
                 },
-                cancer_type=ct
+                cancer_type=f"{portal}__{slug}__{study_id}",
             )
 
-        # ---- after processing all cancers ----
-        if not any_written:
-            print("[data_model] nothing to write (no clinical CSVs found).")
+        # ---- after processing all sources ----
+        if not source_roots:
+            print(f"[data_model] nothing to write: no clinical CSVs found under "
+                  f"{fetch_root}/<cbio|pedcbio>/<cancer_type>/<study_id>/ for {cancer_types}. "
+                  f"Run data_fetch,data_extract first.")
             return
+
+        # project-level union + manifest (one table per node across all sources)
+        _merge_source_tables(dm.gdm_root, source_roots)
+        pd.concat(manifest_parts, ignore_index=True).to_parquet(
+            dm.gdm_root / "indexes" / "source_manifest.parquet", compression="zstd", index=False)
+        if unmapped_parts:
+            _write_text(dm.gdm_root.parent / "metadata" / "unmapped_terms.tsv",
+                        pd.concat(unmapped_parts, ignore_index=True).to_csv(sep="\t", index=False))
 
         # Register feature stores into 'file' node (once)
         file_node_df = dm.write_files_for_features(project_id=project_id)
@@ -1693,9 +1908,10 @@ def build_data_model(
             rep_file = dm.validate_df_report("file", file_node_df, dm.schemas.required_fields_for("file"))
             all_reports.append(rep_file)
 
-        # Attach views once
+        # Attach views once (project-level tables)
         dm.attach_views()
-        print("[data_model] GDM tables written and views attached.")
+        print(f"[data_model] {len(source_roots)} source bundle(s) under {dm.gdm_root / 'by_source'}; "
+              f"project-level tables in {dm.gdm_root}; views attached.")
 
         # ---- emit metadata bundle (once) ----
         nodes_in_scope = ["case", "demographic", "sample", "diagnosis"]
@@ -1705,7 +1921,8 @@ def build_data_model(
         provenance = {
             "sources": provenance_sources,
             "features_root": str(dm.gdm_root / "features"),
-            "notes": "Clinical/omics fetched from cBioPortal + CCDI; transformed to GDC-shaped nodes."
+            "notes": "Clinical/omics fetched from cBioPortal (cbio) and PedcBioPortal (pedcbio) + CCDI; "
+                     "transformed to GDC-shaped nodes per source, then merged.",
         }
         dm.emit_metadata_bundle(
             project_id=project_id,
@@ -1759,8 +1976,10 @@ if __name__ == "__main__":
     python -m src.data_model \
     --schemas-dir src/gdcdictionary/schemas \
     --gdm-root data/gdm \
-    --cbio-dir data/fetch/cbioportal_api_request/Wilms_Tumor \
+    --cbio-dir data/fetch/cbioportal_api_request/cbio/wilms_tumor/wt_target_2018_pub \
     --project-id wt_target_gdc
+
+    (for PedcBioPortal: --cbio-dir data/fetch/cbioportal_api_request/pedcbio/glioma/pbta_all)
 
     Environment overrides:
       DM_DUCKDB_MODE = memory | ro | rw   (default: memory)
@@ -1771,8 +1990,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="GDC-aligned Data Model demo (gdm/).")
     parser.add_argument("--schemas-dir", default="src/gdcdictionary/schemas", help="Path to GDC YAML schemas.")
     parser.add_argument("--gdm-root", default="data/gdm", help="Output root for GDM Parquet/Zarr.")
-    parser.add_argument("--cbio-dir", default="data/fetch/cbioportal_api_request/Wilms_Tumor",
-                        help="Folder with clinical_patients.csv and clinical_samples.csv.")
+    parser.add_argument("--cbio-dir",
+                        default="data/fetch/cbioportal_api_request/cbio/wilms_tumor/wt_target_2018_pub",
+                        help="Folder with clinical_patients.csv and clinical_samples.csv: "
+                             "data/fetch/cbioportal_api_request/<cbio|pedcbio>/<ct_slug>/<study_id>")
     parser.add_argument("--project-id", default="wt_target_gdc", help="Project ID to stamp on 'case' and 'file'.")
     parser.add_argument("--strict", dest="strict", action="store_true", help="Force strict GDC validation.")
     parser.add_argument("--no-strict", dest="strict", action="store_false")
@@ -1809,8 +2030,10 @@ if __name__ == "__main__":
             "HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR": ["FHWT", "DAWT"]
         })
 
-    # Derive a human-readable cancer type from the folder name (e.g., "Wilms_Tumor" -> "Wilms Tumor")
-    cancer_type = Path(args.cbio_dir).name.replace("_", " ")
+    # Label for example files: <portal>__<ct_slug>__<study_id> from .../<portal>/<ct_slug>/<study_id>
+    _parts = Path(args.cbio_dir).parts
+    cancer_type = "__".join(_parts[-3:]) if len(_parts) >= 3 and _parts[-3] in PORTALS \
+        else Path(args.cbio_dir).name
 
     with DataModel(
         schemas_dir=args.schemas_dir,

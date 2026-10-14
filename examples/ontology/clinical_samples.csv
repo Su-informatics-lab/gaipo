@@ -1,0 +1,6 @@
+sampleId,CANCER_TYPE,CANCER_TYPE_DETAILED,ONCOTREE_CODE,ICD_0_3_T
+TARGET-50-EX0001-01,Wilms Tumor,Wilms' Tumor,WT,C649
+TARGET-50-EX0002-01,Wilms Tumor,Nephroblastoma,,C64.9
+TARGET-50-EX0003-01,Wilms Tumor,Wilms tumour,,
+TARGET-50-EX0004-01,Wilms Tumor,"8960/3 : Nephroblastoma, NOS",,
+TARGET-50-EX0005-01,Kidney Cancer,Clear Cell Sarcoma of Kidney,CCSK,C64.9
