@@ -108,6 +108,15 @@ def _load_step_funcs() -> Dict[str, Callable[[], None]]:
         err_msg = f"{type(e).__name__}: {e}"
         steps["post_analysis"] = (lambda err_msg=err_msg: _missing("post_analysis.py", "run_post_analysis()", err_msg))
 
+    # benchmark (on demand, not in DEFAULT_ORDER): repeated stratified k-fold CV,
+    # MOGONET vs. Naive Bayes vs. Random Forest, mean and SD of the fold metrics
+    try:
+        from .benchmark import run_benchmark as _benchmark
+        steps["benchmark"] = _benchmark
+    except Exception as e:
+        err_msg = f"{type(e).__name__}: {e}"
+        steps["benchmark"] = (lambda err_msg=err_msg: _missing("benchmark.py", "run_benchmark()", err_msg))
+
     return steps
 
 DEFAULT_ORDER = [

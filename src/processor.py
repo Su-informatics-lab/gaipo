@@ -404,7 +404,10 @@ def load_and_prepare(
     label_map: Optional[str] = None,
     var_threshold=0.01,
     alpha=0.05,
+    select_features: bool = True,
 ):
+    """select_features=False returns the aligned patient x feature matrices before feature
+    selection and scaling (used by benchmark.py, which refits the selection inside each CV fold)."""
     clin_pat = pd.read_csv(rawData_dir / "clinical_patients.csv")
     clin_sam = pd.read_csv(rawData_dir / "clinical_samples.csv")
 
@@ -474,6 +477,12 @@ def load_and_prepare(
             )
         df = df.loc[common]
         labels_aligned = labels_enc.loc[common]
+
+        if not select_features:
+            df_raw_num = df.select_dtypes(include=["number"]).astype("float32")
+            df_raw_num.index.name = "patientId"
+            omics_dict[mod] = df_raw_num
+            continue
 
         df_filtered = feature_filter_scaler(
             df,

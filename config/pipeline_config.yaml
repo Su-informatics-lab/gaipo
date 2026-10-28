@@ -118,3 +118,15 @@ post_analysis:
     enabled: true
     edges_per_node: 5
     out_dir: data/analysis/feature_selection
+
+# 13) benchmark.py: repeated stratified k-fold cross-validation (run on demand:
+#     python -m src.main --call benchmark). MOGONET uses the model_mogonet settings above.
+benchmark:
+  n_splits: 5
+  seeds: [0, 1, 2, 3, 4]        # one StratifiedKFold shuffle (and model initialization) per seed
+  models: [mogonet, naive_bayes, random_forest]
+  feature_selection: in_fold    # in_fold: refit processor feature selection on each training fold
+                                # precomputed: reuse data_process outputs (selected on all patients)
+  naive_bayes: {}               # sklearn GaussianNB arguments
+  random_forest: { n_estimators: 100, n_jobs: -1 }   # sklearn RandomForestClassifier arguments; random_state = seed
+  out_dir: data/analysis/benchmark

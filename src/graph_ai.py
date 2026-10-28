@@ -442,8 +442,9 @@ def train_with_split(
     num_epoch: int = 400,
     device: str = "cpu",
     save_dir: Optional[Path] = None,
+    seed: int = 1234,
 ) -> Tuple[Dict[str, float], Dict[str, nn.Module]]:
-    set_seed(1234)
+    set_seed(seed)  # benchmark.py passes one seed per CV repeat; graph_ai_model() keeps 1234
 
     # Label normalization (robust)
     classes = pd.Index(np.unique(np.concatenate([pd.Series(y_tr).values,

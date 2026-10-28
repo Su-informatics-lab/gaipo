@@ -197,6 +197,16 @@ Use `--until` to start at the beginning of the pipeline and stop after the named
 python -m src.main --until graph_construct
 ```
 
+### Cross-validation benchmark
+
+`benchmark` is an on-demand stage (not part of `--all`). It compares MOGONET with Gaussian Naive Bayes and Random Forest by stratified k-fold cross-validation repeated over several seeds, and reports the mean and standard deviation of accuracy, macro F1, and AUC across all test folds.
+
+```bash
+python -m src.main --call benchmark
+```
+
+Settings are in the `benchmark` block of `config/pipeline_config.yaml` (`n_splits`, `seeds`, `models`, `feature_selection`); MOGONET uses the `model_mogonet` hyperparameters. With `feature_selection: in_fold` (default), the processor's feature selection and min-max scaling are refitted on each training fold, so test folds are not used before prediction; this needs the `data_extract` outputs. `feature_selection: precomputed` reuses the `data_process` matrices, which were selected on all patients. Results are written to `data/analysis/benchmark/` (`cv_folds.csv` per fold, `cv_splits.csv` with the fold assignment of every patient, and `cv_summary.csv` / `cv_summary.md` with mean ± SD).
+
 ## Docker Compose
 
 Docker Compose provides the most reproducible way to build and run GAIPO.
