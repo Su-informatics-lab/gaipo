@@ -1,10 +1,11 @@
 """
-benchmark.py - Repeated stratified k-fold cross-validation: MOGONET vs. Naive Bayes vs. Random Forest
+benchmark.py - Stratified k-fold cross-validation: MOGONET vs. Naive Bayes vs. Random Forest
 
 For each cancer type and study in the config, the modeling cohort built by processor.py (patients
-with a label and every configured omics modality) is split with
-StratifiedKFold(n_splits, shuffle=True, random_state=seed), once per seed. Within a fold, all
-models see the same training/test patients and the same features.
+with a label and every configured omics modality) is split once with
+StratifiedKFold(n_splits, shuffle=True, random_state=seed), using the single benchmark.seed. The
+same seed initializes MOGONET and Random Forest. Within a fold, all models see the same
+training/test patients and the same features.
 
 feature_selection (config benchmark.feature_selection)
   in_fold      (default) processor.py's selection (VarianceThreshold -> SelectFdr(ANOVA F) ->
@@ -24,13 +25,13 @@ Models (config benchmark.models)
   naive_bayes    sklearn GaussianNB on the concatenated views
   random_forest  sklearn RandomForestClassifier(random_state=seed) on the concatenated views
 
-Metrics: accuracy, macro F1 and ROC AUC on each test fold. Summary: mean and SD (ddof=1) over the
-n_splits x len(seeds) test folds.
+Metrics: accuracy, macro F1 and ROC AUC on each test fold. Summary: mean and SD over the n_splits
+test folds (benchmark.sd_ddof: 1 = sample SD, the default; 0 = population SD, as numpy.std).
 
 Input   in_fold:     data/fetch/cbioportal_api_request/<portal>/<ct_slug>/<study_id>/  (data_extract)
         precomputed: data/gdm/filtered/<portal>/<ct_slug>/<study_id>/                  (data_process)
-Output  <out_dir>/<portal>/<ct_slug>/<study_id>/cv_folds.csv    one row per model x seed x fold
-        <out_dir>/<portal>/<ct_slug>/<study_id>/cv_splits.csv   patientId, label, seed, test fold
+Output  <out_dir>/<portal>/<ct_slug>/<study_id>/cv_folds.csv    one row per model x fold
+        <out_dir>/<portal>/<ct_slug>/<study_id>/cv_splits.csv   patientId, label, test fold
         <out_dir>/<portal>/<ct_slug>/<study_id>/cv_summary.csv  mean / SD per model
         <out_dir>/cv_summary.csv, <out_dir>/cv_summary.md       all studies, "mean ± SD"
         <out_dir>/cv_settings.json                              settings used for the run
@@ -75,7 +76,8 @@ def _load_cfg() -> dict:
 def _bench_cfg(cfg: dict) -> dict:
     b = dict(cfg.get("benchmark", {}) or {})
     b["n_splits"] = int(b.get("n_splits", 5))
-    b["seeds"] = [int(s) for s in (b.get("seeds") or [0, 1, 2, 3, 4])]
+    b["seed"] = int(b.get("seed", 42))
+    b["sd_ddof"] = int(b.get("sd_ddof", 1))
     b["models"] = [str(m).lower() for m in (b.get("models") or list(MODELS))]
     b["feature_selection"] = str(b.get("feature_selection", "in_fold")).lower()
     b["naive_bayes"] = dict(b.get("naive_bayes") or {})
@@ -88,6 +90,8 @@ def _bench_cfg(cfg: dict) -> dict:
         raise ValueError("[benchmark] feature_selection must be 'in_fold' or 'precomputed'")
     if b["n_splits"] < 2:
         raise ValueError("[benchmark] n_splits must be >= 2")
+    if b["sd_ddof"] not in (0, 1):
+        raise ValueError("[benchmark] sd_ddof must be 0 or 1")
     return b
 
 
@@ -286,13 +290,13 @@ def _run_mogonet(Xtr, Xte, y_tr, y_te, views: List[str], seed: int, hp: dict):
 # ==========================
 # Summary
 # ==========================
-def summarize(folds: pd.DataFrame, models: List[str]) -> pd.DataFrame:
+def summarize(folds: pd.DataFrame, models: List[str], ddof: int = 1) -> pd.DataFrame:
     keys = ["cancer_type", "portal", "study_id", "model"]
     g = folds.groupby(keys, sort=False)
     out = g.size().rename("n_folds").to_frame()
     for k in METRICS:
         out[f"{k}_mean"] = g[k].mean()
-        out[f"{k}_sd"] = g[k].std(ddof=1)
+        out[f"{k}_sd"] = g[k].std(ddof=ddof)
     out = out.reset_index()
     out["model"] = pd.Categorical(out["model"], categories=models, ordered=True)
     return out.sort_values(["cancer_type", "portal", "study_id", "model"]).reset_index(drop=True)
@@ -300,8 +304,8 @@ def summarize(folds: pd.DataFrame, models: List[str]) -> pd.DataFrame:
 
 def _markdown(summary: pd.DataFrame, b: dict) -> str:
     lines = [
-        f"Stratified {b['n_splits']}-fold cross-validation repeated with {len(b['seeds'])} seeds "
-        f"{b['seeds']} (feature_selection: {b['feature_selection']}); mean ± SD over test folds.",
+        f"Stratified {b['n_splits']}-fold cross-validation (seed {b['seed']}, feature_selection: "
+        f"{b['feature_selection']}); mean ± SD (ddof={b['sd_ddof']}) over the {b['n_splits']} test folds.",
         "",
         "| Cancer type | Portal:study | Model | n folds | " + " | ".join(METRIC_NAMES[k] for k in METRICS) + " |",
         "|---|---|---|---|" + "---|" * len(METRICS),
@@ -355,44 +359,44 @@ def run_benchmark():
                                  f"< n_splits={b['n_splits']}")
 
             rows, splits = [], []
-            for seed in b["seeds"]:
-                skf = StratifiedKFold(n_splits=b["n_splits"], shuffle=True, random_state=seed)
-                for k, (i_tr, i_te) in enumerate(skf.split(np.zeros(len(y)), y.to_numpy()), start=1):
-                    tr, te = y.index[i_tr], y.index[i_te]
-                    splits += [{"patientId": p, "label": y[p], "seed": seed, "test_fold": k} for p in te]
-                    try:
-                        Xtr, Xte = fold_views(X, y, clin, tr, te, mods, b["feature_selection"], lc,
-                                              clinical_features)
-                    except RuntimeError as e:
-                        raise RuntimeError(f"[benchmark] {tag} seed={seed} fold={k}: {e}") from e
-                    views = list(Xtr)
-                    for name in b["models"]:
-                        t0 = time.time()
-                        if name == "mogonet":
-                            sc = _run_mogonet(Xtr, Xte, y.loc[tr], y.loc[te], views, seed, hp)
-                        else:
-                            sc = _run_sklearn(name, Xtr, Xte, y.loc[tr], y.loc[te], views, seed, b)
-                        dt = time.time() - t0
-                        rows.append({"cancer_type": ct, "portal": portal, "study_id": study_id,
-                                     "model": name, "seed": seed, "fold": k, "n_train": len(tr),
-                                     "n_test": len(te), "n_features": sum(Xtr[v].shape[1] for v in views),
-                                     **sc, "seconds": round(dt, 2)})
-                        print(f"[benchmark] {tag} seed={seed} fold={k}/{b['n_splits']} {name:<13} "
-                              + " ".join(f"{m}={sc[m]:.3f}" for m in METRICS) + f" ({dt:.1f}s)")
+            seed = b["seed"]
+            skf = StratifiedKFold(n_splits=b["n_splits"], shuffle=True, random_state=seed)
+            for k, (i_tr, i_te) in enumerate(skf.split(np.zeros(len(y)), y.to_numpy()), start=1):
+                tr, te = y.index[i_tr], y.index[i_te]
+                splits += [{"patientId": p, "label": y[p], "test_fold": k} for p in te]
+                try:
+                    Xtr, Xte = fold_views(X, y, clin, tr, te, mods, b["feature_selection"], lc,
+                                          clinical_features)
+                except RuntimeError as e:
+                    raise RuntimeError(f"[benchmark] {tag} fold={k}: {e}") from e
+                views = list(Xtr)
+                for name in b["models"]:
+                    t0 = time.time()
+                    if name == "mogonet":
+                        sc = _run_mogonet(Xtr, Xte, y.loc[tr], y.loc[te], views, seed, hp)
+                    else:
+                        sc = _run_sklearn(name, Xtr, Xte, y.loc[tr], y.loc[te], views, seed, b)
+                    dt = time.time() - t0
+                    rows.append({"cancer_type": ct, "portal": portal, "study_id": study_id,
+                                 "model": name, "fold": k, "n_train": len(tr),
+                                 "n_test": len(te), "n_features": sum(Xtr[v].shape[1] for v in views),
+                                 **sc, "seconds": round(dt, 2)})
+                    print(f"[benchmark] {tag} fold={k}/{b['n_splits']} {name:<13} "
+                          + " ".join(f"{m}={sc[m]:.3f}" for m in METRICS) + f" ({dt:.1f}s)")
 
             folds = pd.DataFrame(rows)
             out_dir = out_root / portal / gai._slug(ct) / study_id
             out_dir.mkdir(parents=True, exist_ok=True)
             folds.to_csv(out_dir / "cv_folds.csv", index=False)
             pd.DataFrame(splits).to_csv(out_dir / "cv_splits.csv", index=False)
-            summarize(folds, b["models"]).to_csv(out_dir / "cv_summary.csv", index=False)
+            summarize(folds, b["models"], b["sd_ddof"]).to_csv(out_dir / "cv_summary.csv", index=False)
             all_folds.append(folds)
             print(f"[benchmark] {tag}: wrote {out_dir}/cv_folds.csv, cv_splits.csv, cv_summary.csv")
 
     if not all_folds:
         print("[benchmark] nothing to do (check cancer_type_interest / study IDs).")
         return
-    summary = summarize(pd.concat(all_folds, ignore_index=True), b["models"])
+    summary = summarize(pd.concat(all_folds, ignore_index=True), b["models"], b["sd_ddof"])
     summary.to_csv(out_root / "cv_summary.csv", index=False)
     (out_root / "cv_summary.md").write_text(_markdown(summary, b))
     with open(out_root / "cv_settings.json", "w") as f:

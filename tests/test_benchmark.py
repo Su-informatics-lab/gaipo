@@ -48,7 +48,7 @@ def study(tmp_path, monkeypatch):
         "model_mogonet": {"edges_per_node": 3, "gcn_hidden": [16, 16, 8],
                           "epochs": {"pretrain": 2, "train": 5}, "device": "cpu",
                           "clinical_view": {"enabled": True, "features": ["AGE", "SEX"]}},
-        "benchmark": {"n_splits": 3, "seeds": [0, 1], "out_dir": "data/analysis/benchmark",
+        "benchmark": {"n_splits": 3, "seed": 7, "out_dir": "data/analysis/benchmark",
                       "random_forest": {"n_estimators": 20}},
     }
     (tmp_path / "config").mkdir()
@@ -85,20 +85,29 @@ def test_benchmark_writes_folds_and_mean_sd(study, mode):
 
     out = root / "data/analysis/benchmark"
     folds = pd.read_csv(out / "cbio/test_tumor/study1/cv_folds.csv")
-    assert len(folds) == 3 * 2 * 3                            # models x seeds x folds
+    assert len(folds) == 3 * 3                                # models x folds
     assert set(folds.model) == {"mogonet", "naive_bayes", "random_forest"}
-    assert folds.groupby(["model", "seed"]).n_test.sum().eq(N_PATIENTS).all()
+    assert folds.groupby("model").n_test.sum().eq(N_PATIENTS).all()
     assert folds[["acc", "f1", "auc"]].notna().all().all()
 
     splits = pd.read_csv(out / "cbio/test_tumor/study1/cv_splits.csv")
-    assert splits.groupby("seed").patientId.nunique().eq(N_PATIENTS).all()   # each patient tested once per seed
-    assert not splits.duplicated(["seed", "patientId"]).any()
-    assert splits.groupby(["seed", "test_fold"]).label.nunique().eq(2).all()  # stratified
+    assert splits.patientId.nunique() == N_PATIENTS == len(splits)          # each patient tested once
+    assert splits.groupby("test_fold").label.nunique().eq(2).all()          # stratified
 
     summ = pd.read_csv(out / "cv_summary.csv").set_index("model")
     for m, g in folds.groupby("model"):
-        assert summ.loc[m, "n_folds"] == 6
+        assert summ.loc[m, "n_folds"] == 3
         assert np.isclose(summ.loc[m, "acc_mean"], g.acc.mean())
         assert np.isclose(summ.loc[m, "auc_sd"], g.auc.std(ddof=1))
     assert "±" in (out / "cv_summary.md").read_text()
     assert (out / "cv_settings.json").exists()
+
+
+def test_summary_sd_ddof():
+    folds = pd.DataFrame({"cancer_type": "T", "portal": "cbio", "study_id": "s", "model": "naive_bayes",
+                          "fold": [1, 2, 3, 4, 5], "acc": [0.8, 0.9, 1.0, 0.7, 0.6],
+                          "f1": 0.5, "auc": 0.5})
+    for ddof in (0, 1):
+        s = benchmark.summarize(folds, ["naive_bayes"], ddof).iloc[0]
+        assert s.n_folds == 5 and np.isclose(s.acc_mean, 0.8)
+        assert np.isclose(s.acc_sd, np.std(folds.acc, ddof=ddof))
