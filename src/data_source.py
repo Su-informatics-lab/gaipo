@@ -4,15 +4,21 @@ data_source.py — Harvest CCDI Federation subjects & samples by cancer-type ter
 
 What it does
 ------------
-1) Builds active cancer-type vocabularies from config:
-     - default_type_terms + custom_type_terms
-     - restricts to cancer_type_interest
-     - compiles word-boundary regex per active type
-2) Pages CCDI Federation endpoints to harvest:
+1) Builds the search for each type in cancer_type_interest (config `search.source`):
+     - ontology (default in pipeline_config.yaml): query terms from the ontology layer, i.e.
+       the NCIt concept set of the cohort (config/ontology/analysis_groups.tsv) and every
+       label / ICD-O-3 code mapped to those concepts in the SSSOM files; see
+       src/ontology_search.py
+     - config: the fixed lists default_type_terms + custom_type_terms (previous behaviour),
+       compiled to a word-boundary regex per type
+2) Pages CCDI Federation endpoints to harvest (case-insensitive substring search):
      - /subject-diagnosis  → subject_id + diagnoses (per source)
      - /sample-diagnosis   → sample_id + subject_id + diagnoses (per source)
-3) Classifies entities to cancer types via compiled regexes.
-4) Writes per-type CSVs and an id map parquet for downstream steps.
+3) Assigns entities to cancer types: ontology mode resolves each diagnosis value to an NCIt
+   concept and keeps it if the concept is in the cohort; config mode uses the regexes.
+4) Writes per-type CSVs and an id map parquet for downstream steps, the term provenance
+   (search_terms.tsv) and, in ontology mode with compare_with_config, a comparison with the
+   fixed list on the same records (search_report.tsv, search_values.tsv).
 
 Key inputs (from config/pipeline_config.yaml)
 ---------------------------------------------
@@ -34,6 +40,8 @@ Outputs (relative to repo root)
 data/fetch/ccdi_api_request/
   subject_ids/<cancer_type>.csv   # columns: source,subject_id,diagnoses
   sample_ids/<cancer_type>.csv    # columns: source,sample_id,subject_id,diagnoses
+  search_terms.tsv                # every term, its origin (NCIt / SSSOM row) and whether it was queried
+  search_report.tsv, search_values.tsv   # ontology vs fixed list (ontology mode, compare_with_config)
 data/gdm/indexes/
   idmap.parquet                   # columns: source,sample_id,subject_id,diagnoses,study_id,
                                   #          node_id_subject,node_id_sample
@@ -92,7 +100,7 @@ VERBOSE = cfg.get("verbose", True)
 CONSIDER_OVERLAP = cfg.get("consider_overlap", False)
 
 # Cancer‐type definitions
-default_type_terms = cfg["default_type_terms"]
+default_type_terms = cfg.get("default_type_terms") or {}
 custom_type_terms  = cfg.get("custom_type_terms") or {}
 cancer_type_interest = cfg["cancer_type_interest"]
 TARGET_SOURCE = cfg.get("target_source")
@@ -114,17 +122,23 @@ GDM_ROOT.mkdir(parents=True, exist_ok=True)
 # ─── Build Active Types & Regexes ──────────────────────────────────────────────
 
 # Merge default + custom
-combined_type_terms = {**default_type_terms, **custom_type_terms}
+combined_type_terms = {**(default_type_terms or {}), **custom_type_terms}
 
-# Validate interest list
-for t in cancer_type_interest:
-    if t not in combined_type_terms:
-        raise KeyError(f"Interest {t!r} not in defined types")
+# Search mode (search: block in pipeline_config.yaml). Without the block: the fixed term list.
+SEARCH_CFG    = cfg.get("search") or {}
+SEARCH_SOURCE = str(SEARCH_CFG.get("source", "config")).lower()   # ontology | config
+
+# Validate interest list (the fixed list is required only when it is used)
+if SEARCH_SOURCE == "config":
+    for t in cancer_type_interest:
+        if t not in combined_type_terms:
+            raise KeyError(f"Interest {t!r} not in defined types")
 
 # Restrict to active
 active_type_terms = {
     t: sorted(combined_type_terms[t])
     for t in cancer_type_interest
+    if t in combined_type_terms
 }
 
 active_type_regexes = {
@@ -141,6 +155,14 @@ search_terms = [
     for terms in active_type_terms.values()
     for term in terms
 ]
+
+
+def _fixed_lists(types):
+    """Fixed term lists and their word-boundary regexes for the given cancer types."""
+    terms = {t: sorted(combined_type_terms[t]) for t in types if t in combined_type_terms}
+    regexes = {t: re.compile(r"\b(?:" + "|".join(re.escape(x) for x in terms[t]) + r")\b", re.I)
+               for t in terms}
+    return terms, regexes
 
 
 # ─── Utilities to robustly flatten CCDI value objects ──────────────────────────
@@ -738,29 +760,148 @@ def write_idmap_parquet(sample_rows, cancer_type):
         print(f"[GDM] wrote/updated {outp} ({len(slim):,} rows)")
 
 
-# ─── Example: data_fetch() for interested cancer types ─────────────────────────
+# ─── Search plan: query terms + cohort matchers ────────────────────────────────
 
-def data_fetch():
+def search_plan(source=None, compare_with_config=None, types=None):
+    """
+    Returns (queries, matchers, compare, terms_table).
+      queries   API search strings (union over cancer types, minimal set)
+      matchers  {cancer_type: object with .search(value)} deciding cohort membership
+      compare   {cancer_type: fixed-list regex} for the ontology-vs-fixed-list report ({} = none)
+      terms_table  provenance of every term (written as search_terms.tsv)
+    source "config":   the fixed lists default_type_terms + custom_type_terms (previous behaviour).
+    source "ontology": terms and membership from the ontology layer (src/ontology_search.py).
+    """
+    source = (source or SEARCH_SOURCE).lower()
+    types = list(types or cancer_type_interest)
+    fixed_terms, fixed_regexes = _fixed_lists(types)
+    if source == "config":
+        missing = [t for t in types if t not in fixed_terms]
+        if missing:
+            raise KeyError(f"No default_type_terms/custom_type_terms for {missing}")
+        table = pd.DataFrame([{"cancer_type": t, "term": x, "origin": "default_type_terms/custom_type_terms",
+                               "queried": True} for t, xs in fixed_terms.items() for x in xs])
+        return [x for xs in fixed_terms.values() for x in xs], fixed_regexes, {}, table
+    if source != "ontology":
+        raise ValueError(f"search.source must be 'ontology' or 'config', not {source!r}")
+
+    from .ontology import OntologyLayer
+    from .ontology_search import CohortMatcher, cohort_terms, minimal_queries
+
+    onto_dir = ROOT / SEARCH_CFG.get("ontology_dir", "config/ontology")
+    onto = OntologyLayer(onto_dir, ROOT / SEARCH_CFG.get("schemas_dir", "src/gdcdictionary/schemas"))
+    cohorts = SEARCH_CFG.get("cohorts") or {}
+    matchers, tables, queries = {}, [], []
+    for t in types:
+        group = cohorts.get(t, t.replace(" ", "_").lower())
+        ct = cohort_terms(group, onto_dir, min_length=int(SEARCH_CFG.get("min_length", 4)))
+        matchers[t] = CohortMatcher(onto, ct, include_unresolved=bool(SEARCH_CFG.get("include_unresolved", True)))
+        tables.append(ct.table.assign(cancer_type=t, cohort=group))
+        queries += ct.table.loc[ct.table.queried, "term"].tolist()
+        if VERBOSE:
+            print(f"[search] {t}: cohort {group!r}, {len(ct.concepts)} NCIt concepts, "
+                  f"{len(ct.table)} terms, {int(ct.table.queried.sum())} queries")
+
+    if compare_with_config is None:
+        compare_with_config = bool(SEARCH_CFG.get("compare_with_config", True))
+    compare = {t: fixed_regexes[t] for t in matchers if t in fixed_regexes} if compare_with_config else {}
+    for t in compare:                     # query the fixed list too, so both selections see the same records
+        queries += fixed_terms[t]
+    table = pd.concat(tables, ignore_index=True)[["cancer_type", "cohort", "term", "origin",
+                                                  "concept_id", "predicate", "queried"]]
+    return minimal_queries(queries), matchers, compare, table
+
+
+def write_search_report(merged_subj, merged_samp, matchers, compare, out_dir):
+    """
+    Ontology selection vs the fixed term list, on the same retrieved records:
+      search_report.tsv  counts per cancer type and entity (subject / sample)
+      search_values.tsv  every diagnosis value either selection matched, with the ontology decision
+    """
+    from collections import Counter
+    summary, values = [], []
+    for entity, merged, key in (("subject", merged_subj, "diagnosis"), ("sample", merged_samp, "diagnoses")):
+        for ct, m in matchers.items():
+            if ct not in compare:
+                continue
+            fixed = compare[ct]
+            ont_ids, fix_ids, seen = set(), set(), Counter()
+            for src, emap in merged.items():
+                for eid, row in emap.items():
+                    diags = row[key]
+                    o = any(m.search(v) for v in diags)
+                    f = any(fixed.search(v) for v in diags)
+                    if o:
+                        ont_ids.add((src, eid))
+                    if f:
+                        fix_ids.add((src, eid))
+                    for v in diags:
+                        seen[v] += 1
+            summary.append({
+                "cancer_type": ct, "entity": entity, "cohort": m.cohort.group,
+                "ontology_concepts": len(m.cohort.concepts), "ontology_terms": len(m.cohort.terms),
+                "fixed_list_terms": len(_fixed_lists([ct])[0].get(ct, [])),
+                "n_ontology": len(ont_ids), "n_fixed_list": len(fix_ids), "n_both": len(ont_ids & fix_ids),
+                "n_ontology_only": len(ont_ids - fix_ids), "n_fixed_list_only": len(fix_ids - ont_ids),
+            })
+            for v, n in seen.items():
+                decision, cid, label = m.explain(v)
+                by_fixed = bool(fixed.search(v))
+                if decision == "no_match" and not by_fixed:
+                    continue
+                values.append({"cancer_type": ct, "entity": entity, "diagnosis": v, "n_records": n,
+                               "ontology_decision": decision, "concept_id": cid, "concept_label": label,
+                               "selected_by_ontology": m.search(v), "selected_by_fixed_list": by_fixed})
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(summary).to_csv(out_dir / "search_report.tsv", sep="\t", index=False)
+    vals = pd.DataFrame(values)
+    if not vals.empty:
+        vals = vals.sort_values(["cancer_type", "entity", "n_records"], ascending=[True, True, False])
+    vals.to_csv(out_dir / "search_values.tsv", sep="\t", index=False)
+    print(f"[search] wrote {out_dir}/search_report.tsv and search_values.tsv")
+    return pd.DataFrame(summary)
+
+
+# ─── data_fetch() for interested cancer types ──────────────────────────────────
+
+def data_fetch(write_cohorts=True, report_dir=None, source=None, compare_with_config=None, types=None):
+    """
+    write_cohorts=False runs the search and writes only search_terms.tsv and the comparison
+    report (to report_dir), leaving subject_ids/, sample_ids/ and idmap.parquet untouched.
+    """
+    queries, matchers, compare, terms_table = search_plan(source, compare_with_config, types)
+    report_dir = Path(report_dir) if report_dir else SUBJECT_IDS_DIR.parent
+    report_dir.mkdir(parents=True, exist_ok=True)
+    terms_table.to_csv(report_dir / "search_terms.tsv", sep="\t", index=False)
+    if VERBOSE:
+        print(f"[search] source={(source or SEARCH_SOURCE)}: {len(queries)} API queries: {queries}")
+
     # Subjects
-    subj_res     = [(t, harvest_subjects_for_term(t)) for t in search_terms]
+    subj_res     = [(t, harvest_subjects_for_term(t)) for t in queries]
     merged_subj  = merge_subjects(subj_res)
-    subj_matches = classify_entities(merged_subj, active_type_regexes)
-    for ctype in active_type_terms:
-        rows = filter_entities(subj_matches, [ctype])
-        outf = SUBJECT_IDS_DIR / f"{ctype.replace(' ','_').lower()}.csv"
-        export_subjects(rows, outf)
-    
+    subj_matches = classify_entities(merged_subj, matchers)
+    if write_cohorts:
+        for ctype in matchers:
+            rows = filter_entities(subj_matches, [ctype])
+            outf = SUBJECT_IDS_DIR / f"{ctype.replace(' ','_').lower()}.csv"
+            export_subjects(rows, outf)
+
     # Samples
-    samp_res     = [(t, harvest_samples_for_term(t)) for t in search_terms]
+    samp_res     = [(t, harvest_samples_for_term(t)) for t in queries]
     merged_samp  = merge_samples(samp_res)
-    samp_matches = classify_samples(merged_samp, active_type_regexes)
-    for ctype in active_type_terms:
-        rows = filter_samples(samp_matches, [ctype])
-        outf = SAMPLE_IDS_DIR / f"{ctype.replace(' ','_').lower()}.csv"
-        export_samples(rows, outf)
-        # Also write/update GDM idmap for this cancer type
-        write_idmap_parquet(rows, ctype)
-    
+    samp_matches = classify_samples(merged_samp, matchers)
+    if write_cohorts:
+        for ctype in matchers:
+            rows = filter_samples(samp_matches, [ctype])
+            outf = SAMPLE_IDS_DIR / f"{ctype.replace(' ','_').lower()}.csv"
+            export_samples(rows, outf)
+            # Also write/update GDM idmap for this cancer type
+            write_idmap_parquet(rows, ctype)
+
+    if compare:
+        write_search_report(merged_subj, merged_samp, matchers, compare, report_dir)
+
 
 if __name__ == "__main__":
     data_fetch()

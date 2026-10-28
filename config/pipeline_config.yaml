@@ -27,7 +27,8 @@ retry_status: [429, 500, 502, 503, 504]
 rate_limit:
   sleep_seconds: 0.0   # bump to e.g. 0.2 if you hit 429s a lot
 
-# 4) cancer term dictionaries (unchanged)
+# 4) fixed cancer term lists: used when search.source is "config", and as the
+#    baseline in the ontology-vs-fixed-list report (search_report.tsv)
 default_type_terms:
   Wilms Tumor:
     - "wilms"
@@ -42,6 +43,19 @@ custom_type_terms: {}
   # Neuroblastoma:
   #   - "neuroblastoma"
   #   - "nbl"
+
+# 4b) CCDI search for data_fetch (src/data_source.py, src/ontology_search.py)
+search:
+  source: ontology            # ontology: query terms and cohort membership from config/ontology
+                              #   (NCIt concept set of the cohort + labels and ICD-O-3 codes in the SSSOM files)
+                              # config: the fixed lists above (previous behaviour)
+  cohorts:                    # cancer type -> NCIt concept set in config/ontology/analysis_groups.tsv
+    "Wilms Tumor": wilms_tumor
+    "Glioma": glioma
+  include_unresolved: true    # keep a value that resolves to no concept but contains a cohort term
+                              #   (marked term_only in search_values.tsv, for curation)
+  compare_with_config: true   # also query the fixed lists; write search_report.tsv / search_values.tsv
+  min_length: 4               # shorter terms are not used
 
 # 5) which types you want right now
 cancer_type_interest:
