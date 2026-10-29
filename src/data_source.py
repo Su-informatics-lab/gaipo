@@ -4,21 +4,22 @@ data_source.py — Harvest CCDI Federation subjects & samples by cancer-type ter
 
 What it does
 ------------
-1) Builds the search for each type in cancer_type_interest (config `search.source`):
-     - ontology (default in pipeline_config.yaml): query terms from the ontology layer, i.e.
-       the NCIt concept set of the cohort (config/ontology/analysis_groups.tsv) and every
-       label / ICD-O-3 code mapped to those concepts in the SSSOM files; see
-       src/ontology_search.py
-     - config: the fixed lists default_type_terms + custom_type_terms (previous behaviour),
-       compiled to a word-boundary regex per type
+1) Builds the search for each type in cancer_type_interest (config `search.use_ontology`):
+     - false (default): the fixed lists default_type_terms + custom_type_terms, compiled to a
+       word-boundary regex per type
+     - true (optional): query terms from the ontology layer, i.e. the NCIt concept set of the
+       cohort (config/ontology/analysis_groups.tsv) and every label / ICD-O-3 code mapped to
+       those concepts in the SSSOM files; see src/ontology_search.py. More and broader
+       queries, so the fetch takes considerably longer.
 2) Pages CCDI Federation endpoints to harvest (case-insensitive substring search):
      - /subject-diagnosis  → subject_id + diagnoses (per source)
      - /sample-diagnosis   → sample_id + subject_id + diagnoses (per source)
-3) Assigns entities to cancer types: ontology mode resolves each diagnosis value to an NCIt
-   concept and keeps it if the concept is in the cohort; config mode uses the regexes.
-4) Writes per-type CSVs and an id map parquet for downstream steps, the term provenance
-   (search_terms.tsv) and, in ontology mode with compare_with_config, a comparison with the
-   fixed list on the same records (search_report.tsv, search_values.tsv).
+3) Assigns entities to cancer types: the fixed lists use the regexes; ontology mode resolves
+   each diagnosis value to an NCIt concept and keeps it if the concept is in the cohort.
+4) Writes per-type CSVs and an id map parquet for downstream steps, and search_skipped.tsv
+   (sources that returned no records). Ontology mode also writes the term provenance
+   (search_terms.tsv) and, with compare_with_config, a comparison with the fixed lists on
+   the same records (search_report.tsv, search_values.tsv).
 
 Key inputs (from config/pipeline_config.yaml)
 ---------------------------------------------
@@ -40,8 +41,9 @@ Outputs (relative to repo root)
 data/fetch/ccdi_api_request/
   subject_ids/<cancer_type>.csv   # columns: source,subject_id,diagnoses
   sample_ids/<cancer_type>.csv    # columns: source,sample_id,subject_id,diagnoses
-  search_terms.tsv                # every term, its origin (NCIt / SSSOM row) and whether it was queried
-  search_report.tsv, search_values.tsv   # ontology vs fixed list (ontology mode, compare_with_config)
+  search_skipped.tsv              # per source: requests that returned no records, and why
+  search_terms.tsv                # ontology mode: every term, its origin (NCIt / SSSOM row), queried or not
+  search_report.tsv, search_values.tsv   # ontology mode with compare_with_config: ontology vs fixed lists
 data/gdm/indexes/
   idmap.parquet                   # columns: source,sample_id,subject_id,diagnoses,study_id,
                                   #          node_id_subject,node_id_sample
@@ -125,9 +127,12 @@ GDM_ROOT.mkdir(parents=True, exist_ok=True)
 # Merge default + custom
 combined_type_terms = {**(default_type_terms or {}), **custom_type_terms}
 
-# Search mode (search: block in pipeline_config.yaml). Without the block: the fixed term list.
-SEARCH_CFG    = cfg.get("search") or {}
-SEARCH_SOURCE = str(SEARCH_CFG.get("source", "config")).lower()   # ontology | config
+# Search mode (search: block in pipeline_config.yaml). Default: the fixed term lists.
+SEARCH_CFG = cfg.get("search") or {}
+_use_ontology = SEARCH_CFG.get("use_ontology")
+if _use_ontology is None:                                  # older spelling: source: ontology | config
+    _use_ontology = str(SEARCH_CFG.get("source", "config")).lower() == "ontology"
+SEARCH_SOURCE = "ontology" if _use_ontology is True else "config"
 
 # Validate interest list (the fixed list is required only when it is used)
 if SEARCH_SOURCE == "config":
@@ -334,15 +339,27 @@ def _session():
 
 
 def _get_page(base, term, page, per_page=PER_PAGE):
+    """One page of a CCDI search. Retries timeouts, dropped connections and retry_status codes
+    (5 tries, 1-16 s back-off); if all fail, records RequestFailed and returns None so the
+    caller stops paging this search (sources left short are then flagged Incomplete)."""
     params = {"search": term, "page": page, "per_page": per_page}
+    last = None
     for i in range(5):
-        r = _session().get(base, params=params, timeout=TIMEOUT)
+        try:
+            r = _session().get(base, params=params, timeout=TIMEOUT)
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last = f"{type(e).__name__}: {e}"
+            time.sleep(2**i)
+            continue
         if r.status_code in RETRY_STATUS:
+            last = f"HTTP {r.status_code}"
             time.sleep(2**i)
             continue
         r.raise_for_status()
         return r.json()
-    r.raise_for_status()
+    endpoint = "subject-diagnosis" if base == BASE_SUBJECT else "sample-diagnosis"
+    _skip(endpoint, term, page, "ALL", "RequestFailed", f"{last} (5 tries, timeout={TIMEOUT}s)")
+    return None
 
 
 # Per-source responses that returned no records, so a run does not silently lose a source.
@@ -368,6 +385,8 @@ def _usable_blocks(blocks, endpoint, term, page, complete=()):
     """Yield (source, total, data) for each per-source block that carries results.
     `complete` = sources whose records for this search were all received on earlier pages;
     their "unable to calculate offset" reply to a page past the end is expected and ignored."""
+    if blocks is None:                                  # request failed; already recorded
+        return
     if not isinstance(blocks, list):
         _skip(endpoint, term, page, "-", "BadResponse", f"response is a {type(blocks).__name__}: {str(blocks)[:300]}")
         return
@@ -926,8 +945,8 @@ def write_search_report(merged_subj, merged_samp, matchers, compare, out_dir):
 # ─── data_fetch() for interested cancer types ──────────────────────────────────
 
 def _harvest(fn, queries):
-    """Run fn over the queries, search.max_workers at a time; results keep the query order."""
-    workers = max(1, int(SEARCH_CFG.get("max_workers", 4)))
+    """Run fn over the queries, search.max_workers at a time (default 1); results keep the query order."""
+    workers = max(1, int(SEARCH_CFG.get("max_workers", 1)))
     if workers == 1 or len(queries) < 2:
         return [(t, fn(t)) for t in queries]
     from concurrent.futures import ThreadPoolExecutor
@@ -937,17 +956,21 @@ def _harvest(fn, queries):
 
 def data_fetch(write_cohorts=True, report_dir=None, source=None, compare_with_config=None, types=None):
     """
-    write_cohorts=False runs the search and writes only search_terms.tsv and the comparison
-    report (to report_dir), leaving subject_ids/, sample_ids/ and idmap.parquet untouched.
+    source: "config" (fixed term lists) or "ontology"; default from search.use_ontology.
+    write_cohorts=False runs the search and writes only the reports (to report_dir), leaving
+    subject_ids/, sample_ids/ and idmap.parquet untouched.
     """
-    queries, matchers, compare, terms_table = search_plan(source, compare_with_config, types)
+    mode = (source or SEARCH_SOURCE).lower()
+    queries, matchers, compare, terms_table = search_plan(mode, compare_with_config, types)
     SKIPPED.clear()
     _SKIP_PRINTED.clear()
     report_dir = Path(report_dir) if report_dir else SUBJECT_IDS_DIR.parent
     report_dir.mkdir(parents=True, exist_ok=True)
-    terms_table.to_csv(report_dir / "search_terms.tsv", sep="\t", index=False)
+    if mode == "ontology":
+        terms_table.to_csv(report_dir / "search_terms.tsv", sep="\t", index=False)
     if VERBOSE:
-        print(f"[search] source={(source or SEARCH_SOURCE)}: {len(queries)} API queries: {queries}")
+        print(f"[search] {'ontology layer' if mode == 'ontology' else 'fixed term lists'}: "
+              f"{len(queries)} API queries: {queries}")
 
     # Subjects
     subj_res     = _harvest(harvest_subjects_for_term, queries)

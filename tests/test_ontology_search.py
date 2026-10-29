@@ -2,6 +2,8 @@
 import pandas as pd
 import pytest
 
+import requests
+
 from src.ontology import OntologyLayer
 from src.ontology_search import CohortMatcher, cohort_terms, minimal_queries, term_regex
 
@@ -94,6 +96,8 @@ def ds(monkeypatch, tmp_path):
 
 
 TYPES = ["Wilms Tumor", "Glioma"]
+from src import data_source as _ds_module  # noqa: E402
+REAL_GET_PAGE = _ds_module._get_page
 
 
 def test_data_fetch_ontology_mode_writes_cohorts_and_report(ds, tmp_path):
@@ -180,3 +184,43 @@ def test_parallel_and_serial_harvests_agree(ds, tmp_path, monkeypatch):
         ds.data_fetch(source="ontology", compare_with_config=False, types=TYPES)
         out[workers] = pd.read_csv(tmp_path / "ccdi/sample_ids/glioma.csv").sort_values("sample_id").reset_index(drop=True)
     pd.testing.assert_frame_equal(out[1], out[4])
+
+
+def test_default_is_the_fixed_term_lists(ds, tmp_path, monkeypatch):
+    """search.use_ontology is false in pipeline_config.yaml: same queries, in the same order, and the
+    same regex selection as before the ontology search existed; no ontology files are written."""
+    assert ds.SEARCH_SOURCE == "config"
+    sent = []
+    fake = ds._get_page
+    monkeypatch.setattr(ds, "_get_page", lambda base, term, page, per_page=100: sent.append(term) or fake(base, term, page))
+    ds.data_fetch(types=TYPES)
+    fixed = [t for ct in TYPES for t in sorted({**ds.default_type_terms, **ds.custom_type_terms}[ct])]
+    assert sent == fixed + fixed                                     # subjects, then samples
+    assert set(pd.read_csv(tmp_path / "ccdi/sample_ids/glioma.csv").sample_id) == {"SA5", "SA9"}
+    assert not (tmp_path / "ccdi/search_terms.tsv").exists()
+    assert not (tmp_path / "ccdi/search_report.tsv").exists()
+
+
+def test_use_ontology_true_switches_the_default(ds, tmp_path, monkeypatch):
+    monkeypatch.setattr(ds, "SEARCH_SOURCE", "ontology")
+    ds.data_fetch(types=TYPES, compare_with_config=False)
+    assert set(pd.read_csv(tmp_path / "ccdi/sample_ids/glioma.csv").sample_id) == {"SA5", "SA6", "SA7", "SA9"}
+    assert (tmp_path / "ccdi/search_terms.tsv").exists()
+
+
+def test_timeouts_are_retried_then_recorded_not_fatal(ds, tmp_path, monkeypatch):
+    calls = []
+
+    class Down:
+        headers = {}
+        def get(self, *a, **k):
+            calls.append(1)
+            raise requests.ReadTimeout("read timed out")
+
+    monkeypatch.setattr(ds, "_get_page", REAL_GET_PAGE)
+    monkeypatch.setattr(ds, "_session", lambda: Down())
+    monkeypatch.setattr(ds.time, "sleep", lambda s: None)
+    ds.data_fetch(write_cohorts=False, report_dir=tmp_path / "rep", source="config", types=TYPES)
+    sk = pd.read_csv(tmp_path / "rep/search_skipped.tsv", sep="\t")
+    assert set(sk.kind) == {"RequestFailed"} and set(sk.source) == {"ALL"}
+    assert len(calls) == 5 * 2 * 6                                   # 5 tries x 2 endpoints x 6 terms

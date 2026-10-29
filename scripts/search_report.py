@@ -13,7 +13,8 @@ selects records both ways on the same retrieved data. Writes only:
                                                     term_only) and the NCIt concept it resolved to
 
 data/fetch/ccdi_api_request/{subject_ids,sample_ids}/ and data/gdm/indexes/idmap.parquet are not
-written, so the cohorts used by the processor stay as they are.
+written, so the cohorts used by the processor stay as they are. It runs the ontology search
+whatever search.use_ontology says, so expect it to take much longer than a default data_fetch.
 
 Run from the repository root (needs network access to federation.ccdi.cancer.gov):
 

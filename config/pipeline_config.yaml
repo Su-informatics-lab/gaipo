@@ -19,11 +19,11 @@ services:
 target_source: null   # "PCDC" | "Treehouse" | "StJude" | "KidsFirst" | "ccdi-ecDNA"
 
 # 3) paging / HTTP
-per_page: 100        # records per CCDI request; 500-1000 needs far fewer requests. If search_skipped.tsv
-                     # then lists kind "Incomplete" for a source, go back to 100.
+per_page: 100        # records per CCDI request. Larger pages need fewer requests but each takes longer
+                     # (raise timeout too); if search_skipped.tsv lists "Incomplete", go back to 100.
 verbose: true
 consider_overlap: false
-timeout: 60
+timeout: 60          # seconds per request; slow CCDI sources may need 120
 retry_status: [429, 500, 502, 503, 504]
 rate_limit:
   sleep_seconds: 0.0   # bump to e.g. 0.2 if you hit 429s a lot
@@ -45,11 +45,12 @@ custom_type_terms: {}
   #   - "neuroblastoma"
   #   - "nbl"
 
-# 4b) CCDI search for data_fetch (src/data_source.py, src/ontology_search.py)
+# 4b) Optional: CCDI search terms from the ontology layer (src/ontology_search.py).
+#     Off by default: data_fetch searches with the fixed lists above.
 search:
-  source: ontology            # ontology: query terms and cohort membership from config/ontology
-                              #   (NCIt concept set of the cohort + labels and ICD-O-3 codes in the SSSOM files)
-                              # config: the fixed lists above (previous behaviour)
+  use_ontology: false         # true: query terms and cohort membership from config/ontology (NCIt concept
+                              #   set of the cohort + labels and ICD-O-3 codes in the SSSOM files).
+                              #   More and broader queries, so data_fetch takes much longer.
   cohorts:                    # cancer type -> NCIt concept set in config/ontology/analysis_groups.tsv
     "Wilms Tumor": wilms_tumor
     "Glioma": glioma
@@ -59,7 +60,7 @@ search:
   min_length: 4               # shorter terms are not used
   query_codes: false          # ICD-O-3 codes are not sent as separate queries when their label is already
                               #   searched (CCDI writes "9421/1 : Pilocytic astrocytoma"); true = send them too
-  max_workers: 4              # CCDI queries run in parallel (1 = one at a time)
+  max_workers: 1              # CCDI queries in parallel; >1 is faster but the federation API may time out
 
 # 5) which types you want right now
 cancer_type_interest:

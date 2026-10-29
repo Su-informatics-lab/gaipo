@@ -2,10 +2,12 @@
 
 Concept-based metadata mapping, used at two stages:
 
-- **`data_fetch` (search):** the CCDI search terms of a cohort are generated from its NCIt
+- **`data_fetch` (search), optional:** with `search.use_ontology: true` in
+  `pipeline_config.yaml`, the CCDI search terms of a cohort are generated from its NCIt
   concepts (`analysis_groups.tsv`) and every label and ICD-O-3 code mapped to them below, and a
   returned record joins the cohort when its diagnosis resolves to one of those concepts
-  (`src/ontology_search.py`; `search:` in `pipeline_config.yaml`).
+  (`src/ontology_search.py`). Off by default (fixed term lists), because the broader search
+  takes much longer.
 - **`data_model` (standardization):** source values resolve to an **NCIt concept** first; GDC
   values and cross-references are derived from the concept.
 
@@ -36,8 +38,8 @@ predicate (`skos:exactMatch`, `skos:broadMatch`, …), justification and confide
   `data/metadata/unmapped_terms.tsv` (values to curate). Unresolved values fall back to the
   legacy maps, or `Unknown` if the legacy value is not a valid GDC enum.
 - Worked example: `python -m examples.ontology.run_example`; tests: `pytest tests/test_ontology.py`.
-- Search: `data_fetch` writes `data/fetch/ccdi_api_request/search_terms.tsv` (each term, its
-  origin row and NCIt concept). `python scripts/search_report.py "Wilms Tumor" "Glioma"` compares
+- Search (with `use_ontology: true`): `data_fetch` writes
+  `data/fetch/ccdi_api_request/search_terms.tsv` (each term, its origin row and NCIt concept). `python scripts/search_report.py "Wilms Tumor" "Glioma"` compares
   the ontology search with the fixed term lists on the same CCDI records
   (`data/metadata/search_report/`) without changing the cohort files; tests:
   `pytest tests/test_ontology_search.py`.
