@@ -124,3 +124,22 @@ def test_config_mode_is_the_previous_fixed_list(ds, tmp_path):
     glioma = set(pd.read_csv(tmp_path / "ccdi/sample_ids/glioma.csv").sample_id)
     assert glioma == {"SA5", "SA9"}                                # \bglioma\b only
     assert not (tmp_path / "ccdi/search_report.tsv").exists()
+
+
+def test_unusable_source_blocks_are_logged_not_fatal(ds, tmp_path, monkeypatch):
+    good = ds._get_page
+
+    def flaky(base, term, page, per_page=100):
+        return good(base, term, page, per_page) + [
+            {"source": "BROKEN", "message": "upstream timeout"},           # no summary / data
+            {"source": "ERR", "errors": [{"kind": "InvalidParameters"}]},
+        ]
+
+    monkeypatch.setattr(ds, "_get_page", flaky)
+    ds.data_fetch(write_cohorts=False, report_dir=tmp_path / "rep", source="ontology",
+                  compare_with_config=True, types=TYPES)
+    sk = pd.read_csv(tmp_path / "rep/search_skipped.tsv", sep="\t")
+    assert set(sk.source) == {"BROKEN", "ERR"}
+    assert {"subject-diagnosis", "sample-diagnosis"} == set(sk.endpoint)
+    rep = pd.read_csv(tmp_path / "rep/search_report.tsv", sep="\t").set_index(["cancer_type", "entity"])
+    assert rep.loc[("Glioma", "sample")].n_ontology == 4                 # the good source still counts

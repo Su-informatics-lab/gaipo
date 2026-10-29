@@ -333,6 +333,40 @@ def _get_page(base, term, page, per_page=PER_PAGE):
     r.raise_for_status()
 
 
+# Per-source responses that could not be used (error, or no summary/data), recorded so a run
+# does not silently lose a source; written to search_skipped.tsv by data_fetch().
+SKIPPED = []
+
+
+def _skip(endpoint, term, page, src, reason):
+    SKIPPED.append({"endpoint": endpoint, "search": term, "page": page, "source": src, "reason": reason})
+    print(f"[WARN] {endpoint} search={term!r} page {page}: source {src} skipped ({reason})")
+
+
+def _usable_blocks(blocks, endpoint, term, page):
+    """Yield (source, total, data) for each per-source block that carries results."""
+    if not isinstance(blocks, list):
+        _skip(endpoint, term, page, "-", f"response is a {type(blocks).__name__}: {str(blocks)[:300]}")
+        return
+    for b in blocks:
+        if not isinstance(b, dict):
+            _skip(endpoint, term, page, "-", f"unexpected item: {str(b)[:300]}")
+            continue
+        src = b.get("source")
+        if TARGET_SOURCE and src != TARGET_SOURCE:
+            continue
+        if not src or b.get("errors"):
+            _skip(endpoint, term, page, src or "-", "errors: " + json.dumps(b.get("errors"), default=str)[:300])
+            continue
+        counts = (b.get("summary") or {}).get("counts") or {}
+        data = b.get("data")
+        if "all" not in counts or not isinstance(data, list):
+            _skip(endpoint, term, page, src, "no summary/data, keys " + ",".join(sorted(map(str, b)))
+                  + ": " + json.dumps(b, default=str)[:300])
+            continue
+        yield src, counts["all"], data
+
+
 # ─── Subject pipeline ──────────────────────────────────────────────────────────
 
 SUBJECT_OUT_COLUMNS = [
@@ -355,15 +389,7 @@ def harvest_subjects_for_term(term):
     while True:
         blocks = _get_page(BASE_SUBJECT, term, page)
         all_done = True
-        for b in blocks:
-            src = b.get("source")
-            if not src or b.get("errors"):
-                continue
-            if TARGET_SOURCE and src != TARGET_SOURCE:
-                continue
-
-            total = b["summary"]["counts"]["all"]
-            data  = b["data"]
+        for src, total, data in _usable_blocks(blocks, "subject-diagnosis", term, page):
             info  = per_src.setdefault(
                 src,
                 {"total": total, "seen": 0, "subjects": {}}
@@ -528,15 +554,7 @@ def harvest_samples_for_term(term):
     while True:
         blocks = _get_page(BASE_SAMPLE, term, page)
         all_done = True
-        for b in blocks:
-            src = b.get("source")
-            if not src or b.get("errors"):
-                continue
-            if TARGET_SOURCE and src != TARGET_SOURCE:
-                continue
-
-            total = b["summary"]["counts"]["all"]
-            data  = b["data"]
+        for src, total, data in _usable_blocks(blocks, "sample-diagnosis", term, page):
             info  = per_src.setdefault(
                 src,
                 {"total": total, "seen": 0, "samples": {}}
@@ -871,6 +889,7 @@ def data_fetch(write_cohorts=True, report_dir=None, source=None, compare_with_co
     report (to report_dir), leaving subject_ids/, sample_ids/ and idmap.parquet untouched.
     """
     queries, matchers, compare, terms_table = search_plan(source, compare_with_config, types)
+    SKIPPED.clear()
     report_dir = Path(report_dir) if report_dir else SUBJECT_IDS_DIR.parent
     report_dir.mkdir(parents=True, exist_ok=True)
     terms_table.to_csv(report_dir / "search_terms.tsv", sep="\t", index=False)
@@ -901,6 +920,12 @@ def data_fetch(write_cohorts=True, report_dir=None, source=None, compare_with_co
 
     if compare:
         write_search_report(merged_subj, merged_samp, matchers, compare, report_dir)
+    skipped = pd.DataFrame(SKIPPED, columns=["endpoint", "search", "page", "source", "reason"])
+    skipped.to_csv(report_dir / "search_skipped.tsv", sep="\t", index=False)
+    if not skipped.empty:
+        print(f"[WARN] {len(skipped)} per-source responses could not be used (sources: "
+              f"{', '.join(sorted(skipped.source.astype(str).unique()))}); results for those sources "
+              f"may be incomplete. Details: {report_dir / 'search_skipped.tsv'}")
 
 
 if __name__ == "__main__":
