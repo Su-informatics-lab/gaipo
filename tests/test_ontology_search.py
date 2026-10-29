@@ -25,8 +25,11 @@ def test_glioma_queries_are_minimal_and_skip_codes():
     c = cohort_terms("glioma")
     assert "LGGNOS" not in c.terms and "DIPG" not in c.terms
     q = [t.casefold() for t in c.table[c.table.queried].term]
-    assert "glioma" in q and "glioblastoma" in q and "9421/1" in q
-    assert not any(a != b and a in b for a in q for b in q)
+    assert q == ["glioma", "glioblastoma", "astrocytoma"]          # codes covered by their labels
+    assert {"9421/1", "9380/3"} <= set(c.terms)                     # still used to recognise values
+    q_codes = [t.casefold() for t in cohort_terms("glioma", query_codes=True).table.query("queried").term]
+    assert "9421/1" in q_codes and len(q_codes) == 13
+    assert not any(a != b and a in b for a in q_codes for b in q_codes)
 
 
 def test_minimal_queries_and_regex():
@@ -132,7 +135,7 @@ def test_unusable_source_blocks_are_logged_not_fatal(ds, tmp_path, monkeypatch):
     def flaky(base, term, page, per_page=100):
         return good(base, term, page, per_page) + [
             {"source": "BROKEN", "message": "upstream timeout"},           # no summary / data
-            {"source": "ERR", "errors": [{"kind": "InvalidParameters"}]},
+            {"source": "ERR", "errors": [{"kind": "InvalidParameters", "message": "bad"}]},
         ]
 
     monkeypatch.setattr(ds, "_get_page", flaky)
@@ -141,5 +144,39 @@ def test_unusable_source_blocks_are_logged_not_fatal(ds, tmp_path, monkeypatch):
     sk = pd.read_csv(tmp_path / "rep/search_skipped.tsv", sep="\t")
     assert set(sk.source) == {"BROKEN", "ERR"}
     assert {"subject-diagnosis", "sample-diagnosis"} == set(sk.endpoint)
+    assert len(sk) == 4 and (sk.n_responses >= 1).all()             # one row per endpoint x source x kind
+    assert set(sk.kind) == {"BadResponse", "InvalidParameters"}
     rep = pd.read_csv(tmp_path / "rep/search_report.tsv", sep="\t").set_index(["cancer_type", "entity"])
     assert rep.loc[("Glioma", "sample")].n_ontology == 4                 # the good source still counts
+
+
+def test_paging_past_the_end_is_quiet_but_missing_records_are_flagged(ds, tmp_path, monkeypatch):
+    """Page 1 holds everything for FAKE; page 2 replies 'unable to calculate offset' (as StJude and
+    Treehouse do), which is expected. SHORT reports 3 records but sends 1: flagged Incomplete."""
+    good = ds._get_page
+
+    def paged(base, term, page, per_page=100):
+        offset_err = {"source": "FAKE", "errors": [{"kind": "InvalidParameters",
+                      "message": "Invalid value for parameters 'page' and 'per_page': unable to calculate offset."}]}
+        short = {"source": "SHORT", "summary": {"counts": {"all": 3}}, "data": []}
+        if page == 1:
+            blocks = good(base, term, page, per_page)
+            more = {"source": "MORE", "summary": {"counts": {"all": 2}}, "data": []}   # forces a page 2
+            return blocks + [short, more]
+        return [offset_err, short]
+
+    monkeypatch.setattr(ds, "_get_page", paged)
+    ds.data_fetch(write_cohorts=False, report_dir=tmp_path / "rep", source="ontology",
+                  compare_with_config=False, types=TYPES)
+    sk = pd.read_csv(tmp_path / "rep/search_skipped.tsv", sep="\t")
+    assert "FAKE" not in set(sk.source)                              # offset reply after completion: ignored
+    assert set(sk[sk.kind == "Incomplete"].source) == {"SHORT", "MORE"}
+
+
+def test_parallel_and_serial_harvests_agree(ds, tmp_path, monkeypatch):
+    out = {}
+    for workers in (1, 4):
+        monkeypatch.setitem(ds.SEARCH_CFG, "max_workers", workers)
+        ds.data_fetch(source="ontology", compare_with_config=False, types=TYPES)
+        out[workers] = pd.read_csv(tmp_path / "ccdi/sample_ids/glioma.csv").sort_values("sample_id").reset_index(drop=True)
+    pd.testing.assert_frame_equal(out[1], out[4])

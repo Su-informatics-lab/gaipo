@@ -19,7 +19,8 @@ services:
 target_source: null   # "PCDC" | "Treehouse" | "StJude" | "KidsFirst" | "ccdi-ecDNA"
 
 # 3) paging / HTTP
-per_page: 100
+per_page: 100        # records per CCDI request; 500-1000 needs far fewer requests. If search_skipped.tsv
+                     # then lists kind "Incomplete" for a source, go back to 100.
 verbose: true
 consider_overlap: false
 timeout: 60
@@ -56,6 +57,9 @@ search:
                               #   (marked term_only in search_values.tsv, for curation)
   compare_with_config: true   # also query the fixed lists; write search_report.tsv / search_values.tsv
   min_length: 4               # shorter terms are not used
+  query_codes: false          # ICD-O-3 codes are not sent as separate queries when their label is already
+                              #   searched (CCDI writes "9421/1 : Pilocytic astrocytoma"); true = send them too
+  max_workers: 4              # CCDI queries run in parallel (1 = one at a time)
 
 # 5) which types you want right now
 cancer_type_interest:

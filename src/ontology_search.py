@@ -17,7 +17,10 @@ C4822, C3058, ...}), and everything else is read from the SSSOM files.
        exact or close match                                          concept_xrefs.sssom.tsv)
    OncoTree codes used as labels (e.g. "LGGNOS") and terms shorter than `min_length` are
    skipped. A term that contains another term is not sent as its own query, because the
-   shorter term's substring search already returns those records.
+   shorter term's substring search already returns those records. An ICD-O-3 code is not
+   sent either when its own label is already covered by a label query: CCDI writes coded
+   diagnoses as "code : label" (e.g. "9421/1 : Pilocytic astrocytoma" is returned by
+   "Astrocytoma"). `query_codes=True` sends the codes as well.
 
 2) Cohort membership. Each returned diagnosis value is resolved to an NCIt concept with the
    ontology layer (label, then ICD-O-3 code, then the label part of "code : label"):
@@ -88,7 +91,7 @@ class CohortTerms:
 
 
 def cohort_terms(group: str, ontology_dir: PathLike = "config/ontology",
-                 min_length: int = 4) -> CohortTerms:
+                 min_length: int = 4, query_codes: bool = False) -> CohortTerms:
     d = Path(ontology_dir)
     groups = load_groups(d)
     if group not in groups:
@@ -108,23 +111,32 @@ def cohort_terms(group: str, ontology_dir: PathLike = "config/ontology",
                      "concept_id": r.object_id, "predicate": r.predicate_id})
         if r.subject_source == "ICDO3M":
             rows.append({"term": code, "origin": "source_terms.sssom.tsv (ICD-O-3 code)",
-                         "concept_id": r.object_id, "predicate": r.predicate_id})
+                         "concept_id": r.object_id, "predicate": r.predicate_id,
+                         "code_label": r.subject_label})
 
     xr = read_sssom(d / "concept_xrefs.sssom.tsv")
     xr = xr[xr.subject_id.isin(concepts) & xr.predicate_id.isin(XREF_PREDICATES)
             & xr.object_id.str.startswith("ICDO3M:")]
     for r in xr.itertuples(index=False):
-        for term, what in ((r.object_id.split(":", 1)[1], "ICD-O-3 code"), (r.object_label, "ICD-O-3 label")):
-            rows.append({"term": term, "origin": f"concept_xrefs.sssom.tsv ({what})",
-                         "concept_id": r.subject_id, "predicate": r.predicate_id})
+        rows.append({"term": r.object_id.split(":", 1)[1], "origin": "concept_xrefs.sssom.tsv (ICD-O-3 code)",
+                     "concept_id": r.subject_id, "predicate": r.predicate_id, "code_label": r.object_label})
+        rows.append({"term": r.object_label, "origin": "concept_xrefs.sssom.tsv (ICD-O-3 label)",
+                     "concept_id": r.subject_id, "predicate": r.predicate_id})
 
     t = pd.DataFrame(rows)
+    if "code_label" not in t:
+        t["code_label"] = None
     t["term"] = t.term.astype(str).str.strip()
     t = t[t.term.str.len() >= min_length]
     t = t.assign(_k=t.term.map(_key)).drop_duplicates("_k").drop(columns="_k").reset_index(drop=True)
-    q = {_key(x) for x in minimal_queries(t.term)}
+    is_code = t.code_label.notna()
+    label_queries = minimal_queries(t.loc[~is_code, "term"])
+    covered = [_key(x) for x in label_queries]
+    code_queries = [r.term for r in t[is_code].itertuples(index=False)
+                    if query_codes or not any(c in _key(str(r.code_label)) for c in covered)]
+    q = {_key(x) for x in minimal_queries(label_queries + code_queries)}
     t["queried"] = t.term.map(lambda x: _key(x) in q)
-    return CohortTerms(group, concepts, t)
+    return CohortTerms(group, concepts, t.drop(columns="code_label"))
 
 
 class CohortMatcher:

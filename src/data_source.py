@@ -67,6 +67,7 @@ Notes & tips
 """
 import os
 import requests
+import threading
 import time
 import csv
 import re
@@ -321,10 +322,21 @@ def md_get_value(md, key, join_sep="|"):
 
 # ─── Generic paging helper ─────────────────────────────────────────────────────
 
+_LOCAL = threading.local()
+
+
+def _session():
+    """One requests.Session per thread (queries can run in parallel, see search.max_workers)."""
+    if not hasattr(_LOCAL, "s"):
+        _LOCAL.s = requests.Session()
+        _LOCAL.s.headers.update(SESSION.headers)
+    return _LOCAL.s
+
+
 def _get_page(base, term, page, per_page=PER_PAGE):
     params = {"search": term, "page": page, "per_page": per_page}
     for i in range(5):
-        r = SESSION.get(base, params=params, timeout=TIMEOUT)
+        r = _session().get(base, params=params, timeout=TIMEOUT)
         if r.status_code in RETRY_STATUS:
             time.sleep(2**i)
             continue
@@ -333,38 +345,65 @@ def _get_page(base, term, page, per_page=PER_PAGE):
     r.raise_for_status()
 
 
-# Per-source responses that could not be used (error, or no summary/data), recorded so a run
-# does not silently lose a source; written to search_skipped.tsv by data_fetch().
+# Per-source responses that returned no records, so a run does not silently lose a source.
+# Each (endpoint, source, kind) is printed once; all occurrences go to search_skipped.tsv.
 SKIPPED = []
+_SKIP_LOCK = threading.Lock()
+_SKIP_PRINTED = set()
 
 
-def _skip(endpoint, term, page, src, reason):
-    SKIPPED.append({"endpoint": endpoint, "search": term, "page": page, "source": src, "reason": reason})
-    print(f"[WARN] {endpoint} search={term!r} page {page}: source {src} skipped ({reason})")
+def _skip(endpoint, term, page, src, kind, message):
+    with _SKIP_LOCK:
+        SKIPPED.append({"endpoint": endpoint, "source": src, "kind": kind, "message": message,
+                        "search": term, "page": page})
+        key = (endpoint, src, kind)
+        if key in _SKIP_PRINTED:
+            return
+        _SKIP_PRINTED.add(key)
+    print(f"[WARN] {endpoint}: source {src} returned no records ({kind}: {message[:160]}); "
+          f"further occurrences are counted in search_skipped.tsv")
 
 
-def _usable_blocks(blocks, endpoint, term, page):
-    """Yield (source, total, data) for each per-source block that carries results."""
+def _usable_blocks(blocks, endpoint, term, page, complete=()):
+    """Yield (source, total, data) for each per-source block that carries results.
+    `complete` = sources whose records for this search were all received on earlier pages;
+    their "unable to calculate offset" reply to a page past the end is expected and ignored."""
     if not isinstance(blocks, list):
-        _skip(endpoint, term, page, "-", f"response is a {type(blocks).__name__}: {str(blocks)[:300]}")
+        _skip(endpoint, term, page, "-", "BadResponse", f"response is a {type(blocks).__name__}: {str(blocks)[:300]}")
         return
     for b in blocks:
         if not isinstance(b, dict):
-            _skip(endpoint, term, page, "-", f"unexpected item: {str(b)[:300]}")
+            _skip(endpoint, term, page, "-", "BadResponse", f"unexpected item: {str(b)[:300]}")
             continue
         src = b.get("source")
         if TARGET_SOURCE and src != TARGET_SOURCE:
             continue
         if not src or b.get("errors"):
-            _skip(endpoint, term, page, src or "-", "errors: " + json.dumps(b.get("errors"), default=str)[:300])
+            errs = b.get("errors")
+            first = errs[0] if isinstance(errs, list) and errs and isinstance(errs[0], dict) else {}
+            kind, msg = str(first.get("kind", "Error")), str(first.get("message", json.dumps(errs, default=str)))
+            if src in complete and "offset" in msg.lower():
+                continue                                    # paged past this source's last record
+            _skip(endpoint, term, page, src or "-", kind, msg)
             continue
         counts = (b.get("summary") or {}).get("counts") or {}
         data = b.get("data")
         if "all" not in counts or not isinstance(data, list):
-            _skip(endpoint, term, page, src, "no summary/data, keys " + ",".join(sorted(map(str, b)))
-                  + ": " + json.dumps(b, default=str)[:300])
+            _skip(endpoint, term, page, src, "BadResponse", "no summary/data, keys "
+                  + ",".join(sorted(map(str, b))) + ": " + json.dumps(b, default=str)[:300])
             continue
         yield src, counts["all"], data
+
+
+def _finish_term(tag, endpoint, term, pages, per_src):
+    """Flag sources that sent fewer records than they reported; print one line per search."""
+    for src, info in per_src.items():
+        if info["seen"] < info["total"]:
+            _skip(endpoint, term, pages, src, "Incomplete",
+                  f"received {info['seen']} of {info['total']} records")
+    if VERBOSE:
+        got = ", ".join(f"{s} {i['seen']}" for s, i in sorted(per_src.items())) or "no records"
+        print(f"[{tag}:{term}] {pages} page(s): {got}")
 
 
 # ─── Subject pipeline ──────────────────────────────────────────────────────────
@@ -389,12 +428,14 @@ def harvest_subjects_for_term(term):
     while True:
         blocks = _get_page(BASE_SUBJECT, term, page)
         all_done = True
-        for src, total, data in _usable_blocks(blocks, "subject-diagnosis", term, page):
+        progressed = False
+        for src, total, data in _usable_blocks(blocks, "subject-diagnosis", term, page, complete=done):
             info  = per_src.setdefault(
                 src,
                 {"total": total, "seen": 0, "subjects": {}}
             )
             info["seen"] += len(data)
+            progressed = progressed or bool(data)
             if info["seen"] < total:
                 all_done = False
             else:
@@ -430,11 +471,10 @@ def harvest_subjects_for_term(term):
                 row["vital_status"]        = row["vital_status"] or md_get_value(md, "vital_status")
                 row["age_at_vital_status"] = row["age_at_vital_status"] or md_get_value(md, "age_at_vital_status")
 
-        if VERBOSE:
-            print(f"[SUBJ:{term}] p{page}: {len(done)}/{len(per_src)}")
-        if all_done:
+        if all_done or not progressed:      # no source sent records on this page: stop paging
             break
         page += 1
+    _finish_term("SUBJ", "subject-diagnosis", term, page, per_src)
     return per_src
 
 
@@ -554,12 +594,14 @@ def harvest_samples_for_term(term):
     while True:
         blocks = _get_page(BASE_SAMPLE, term, page)
         all_done = True
-        for src, total, data in _usable_blocks(blocks, "sample-diagnosis", term, page):
+        progressed = False
+        for src, total, data in _usable_blocks(blocks, "sample-diagnosis", term, page, complete=done):
             info  = per_src.setdefault(
                 src,
                 {"total": total, "seen": 0, "samples": {}}
             )
             info["seen"] += len(data)
+            progressed = progressed or bool(data)
             if info["seen"] < total:
                 all_done = False
             else:
@@ -616,11 +658,10 @@ def harvest_samples_for_term(term):
                 entry["specimen_molecular_analyte_type"]= entry["specimen_molecular_analyte_type"] or md_get(md, "specimen_molecular_analyte_type")
                 entry["identifiers"]                    = entry["identifiers"] or md_get(md, "identifiers")
 
-        if VERBOSE:
-            print(f"[SAMP:{term}] p{page}: {len(done)}/{len(per_src)}")
-        if all_done:
+        if all_done or not progressed:      # no source sent records on this page: stop paging
             break
         page += 1
+    _finish_term("SAMP", "sample-diagnosis", term, page, per_src)
     return per_src
 
 
@@ -812,7 +853,8 @@ def search_plan(source=None, compare_with_config=None, types=None):
     matchers, tables, queries = {}, [], []
     for t in types:
         group = cohorts.get(t, t.replace(" ", "_").lower())
-        ct = cohort_terms(group, onto_dir, min_length=int(SEARCH_CFG.get("min_length", 4)))
+        ct = cohort_terms(group, onto_dir, min_length=int(SEARCH_CFG.get("min_length", 4)),
+                          query_codes=bool(SEARCH_CFG.get("query_codes", False)))
         matchers[t] = CohortMatcher(onto, ct, include_unresolved=bool(SEARCH_CFG.get("include_unresolved", True)))
         tables.append(ct.table.assign(cancer_type=t, cohort=group))
         queries += ct.table.loc[ct.table.queried, "term"].tolist()
@@ -883,6 +925,16 @@ def write_search_report(merged_subj, merged_samp, matchers, compare, out_dir):
 
 # ─── data_fetch() for interested cancer types ──────────────────────────────────
 
+def _harvest(fn, queries):
+    """Run fn over the queries, search.max_workers at a time; results keep the query order."""
+    workers = max(1, int(SEARCH_CFG.get("max_workers", 4)))
+    if workers == 1 or len(queries) < 2:
+        return [(t, fn(t)) for t in queries]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(workers, len(queries))) as ex:
+        return list(zip(queries, ex.map(fn, queries)))
+
+
 def data_fetch(write_cohorts=True, report_dir=None, source=None, compare_with_config=None, types=None):
     """
     write_cohorts=False runs the search and writes only search_terms.tsv and the comparison
@@ -890,6 +942,7 @@ def data_fetch(write_cohorts=True, report_dir=None, source=None, compare_with_co
     """
     queries, matchers, compare, terms_table = search_plan(source, compare_with_config, types)
     SKIPPED.clear()
+    _SKIP_PRINTED.clear()
     report_dir = Path(report_dir) if report_dir else SUBJECT_IDS_DIR.parent
     report_dir.mkdir(parents=True, exist_ok=True)
     terms_table.to_csv(report_dir / "search_terms.tsv", sep="\t", index=False)
@@ -897,7 +950,7 @@ def data_fetch(write_cohorts=True, report_dir=None, source=None, compare_with_co
         print(f"[search] source={(source or SEARCH_SOURCE)}: {len(queries)} API queries: {queries}")
 
     # Subjects
-    subj_res     = [(t, harvest_subjects_for_term(t)) for t in queries]
+    subj_res     = _harvest(harvest_subjects_for_term, queries)
     merged_subj  = merge_subjects(subj_res)
     subj_matches = classify_entities(merged_subj, matchers)
     if write_cohorts:
@@ -907,7 +960,7 @@ def data_fetch(write_cohorts=True, report_dir=None, source=None, compare_with_co
             export_subjects(rows, outf)
 
     # Samples
-    samp_res     = [(t, harvest_samples_for_term(t)) for t in queries]
+    samp_res     = _harvest(harvest_samples_for_term, queries)
     merged_samp  = merge_samples(samp_res)
     samp_matches = classify_samples(merged_samp, matchers)
     if write_cohorts:
@@ -920,12 +973,27 @@ def data_fetch(write_cohorts=True, report_dir=None, source=None, compare_with_co
 
     if compare:
         write_search_report(merged_subj, merged_samp, matchers, compare, report_dir)
-    skipped = pd.DataFrame(SKIPPED, columns=["endpoint", "search", "page", "source", "reason"])
-    skipped.to_csv(report_dir / "search_skipped.tsv", sep="\t", index=False)
-    if not skipped.empty:
-        print(f"[WARN] {len(skipped)} per-source responses could not be used (sources: "
-              f"{', '.join(sorted(skipped.source.astype(str).unique()))}); results for those sources "
-              f"may be incomplete. Details: {report_dir / 'search_skipped.tsv'}")
+    write_skipped(report_dir)
+
+
+def write_skipped(out_dir):
+    """search_skipped.tsv: one row per endpoint x source x kind, with how often and for which searches."""
+    cols = ["endpoint", "source", "kind", "message", "n_responses", "searches"]
+    raw = pd.DataFrame(SKIPPED, columns=["endpoint", "source", "kind", "message", "search", "page"])
+    if raw.empty:
+        pd.DataFrame(columns=cols).to_csv(Path(out_dir) / "search_skipped.tsv", sep="\t", index=False)
+        return
+    agg = (raw.groupby(["endpoint", "source", "kind"], sort=True)
+              .agg(message=("message", "first"), n_responses=("search", "size"),
+                   searches=("search", lambda x: "; ".join(dict.fromkeys(map(str, x)))))
+              .reset_index()[cols])
+    agg.to_csv(Path(out_dir) / "search_skipped.tsv", sep="\t", index=False)
+    print("[search] sources that returned no records (details in search_skipped.tsv):")
+    for r in agg.itertuples(index=False):
+        print(f"   {r.endpoint:18} {r.source:12} {r.kind:18} x{r.n_responses}")
+    if (agg.kind == "Incomplete").any():
+        print("[WARN] some sources sent fewer records than they reported (kind Incomplete); "
+              "lower per_page or rerun before using the results.")
 
 
 if __name__ == "__main__":
