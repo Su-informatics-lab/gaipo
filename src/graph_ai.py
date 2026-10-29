@@ -76,7 +76,7 @@ def _slug(s: str) -> str:
     return s.replace(" ", "_").lower()
 
 def _normalize_modalities(mods):
-    syn = {"microrna": "mirna"}
+    syn = {"microrna": "mirna", "cna": "linear_cna", "cna_linear": "linear_cna"}
     return [syn.get((m or "").lower(), (m or "").lower()) for m in (mods or [])]
 
 def _normalize_study_map(study_map_raw: dict) -> Dict[str, List[str]]:
@@ -649,7 +649,7 @@ def graph_ai_model():
 
         # base modalities from expression_profiles
         base_mods = _normalize_modalities(expr_profiles.get(ct, []))
-        base_mods = [m for m in base_mods if m in {"mrna", "mirna", "methylation"}]
+        base_mods = [m for m in base_mods if m in {"mrna", "mirna", "methylation", "linear_cna"}]
 
         # append clinical view if enabled
         view_names = base_mods.copy()

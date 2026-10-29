@@ -165,7 +165,7 @@ def _load_cfg() -> dict:
 
 def _normalize_modalities(mods):
     # normalize synonyms from extractor/processor
-    syn = {"microrna": "mirna"}
+    syn = {"microrna": "mirna", "cna": "linear_cna", "cna_linear": "linear_cna"}
     return [syn.get(m.lower(), m.lower()) for m in (mods or [])]
 
 def _normalize_study_map(study_map_raw: dict) -> Dict[str, List[str]]:
@@ -375,7 +375,7 @@ def graph_construct():
 
         # modalities configured for this cancer type (normalize, keep bulk only)
         modalities = _normalize_modalities(expr.get(ct, []))
-        modalities = [m for m in modalities if m in {"mrna", "mirna", "methylation"}]
+        modalities = [m for m in modalities if m in {"mrna", "mirna", "methylation", "linear_cna"}]
         if not modalities:
             print(f"[graph] SKIP {ct}: no valid bulk modalities configured.")
             continue

@@ -88,19 +88,23 @@ processor:
       source: samples
       column: HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR
       map: "FHWT=0,DAWT=1"
-      # mrna, mirna, methylation
-      var_threshold: [0.005, 0.001, 0.01]
+      # one value per modality, in the order of expression_profiles: mrna, mirna, methylation
+      # (values used for the manuscript: Table 3)
+      var_threshold: [0.1, 0.05, 0.01]
       alpha: [0.05, 0.1, 0.05]
-      top_k: [500, 200, 500]
+      top_k: [1000, 500, 500]
+      fdr_fallback: true        # fewer than top_k pass FDR -> top_k by ANOVA F after the variance filter
       test_size: 0.2
       seed: 42
     Glioma:
       source: samples
       column: CANCER_TYPE
       map: "low-grade=0,high-grade=1"
-      var_threshold: [0.005, 0.001, 0.01]
-      alpha: [0.05, 0.10, 0.05]
-      top_k: [500, 500, 500]
+      # mrna, linear_cna
+      var_threshold: [0.1, 0.01]
+      alpha: [0.05, 0.10]
+      top_k: [1000, 1000]
+      fdr_fallback: true
       test_size: 0.2
       seed: 42
 

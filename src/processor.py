@@ -10,8 +10,10 @@ Goals
    - Wilms Tumor: map sampleId -> patientId using CCDI mapping
      data/fetch/ccdi_api_request/sample_ids/<cancer_type>.csv (columns: sample_id, subject_id).
    - If multiple samples per patient, aggregate to patient-level features (median per gene).
-3) Pre-select top-K features per modality using a training-only fit (VarianceThreshold -> FDR(ANOVA F) -> KBest),
-   then optionally scale (z-score / min–max) *after* selection to avoid leakage.
+3) Pre-select the top-k features per modality (basic filter -> VarianceThreshold -> FDR(ANOVA F) -> KBest,
+   as in the PCGS preprocessing), then scale (min-max) the selected features. The selection is fitted
+   on all labelled patients before the train/test split; benchmark.py refits it inside each CV fold.
+   Modalities: mrna, mirna, methylation, linear_cna (continuous copy-number values).
 4) Output:
    - Clean feature matrices per modality (patients × features), aligned to the label index.
    - Encoded binary labels (y) with an inverse label map {0: classA, 1: classB}.
@@ -26,11 +28,14 @@ Notes
       '-NN' suffix (e.g., TARGET-xx-xxxx-01 -> TARGET-xx-xxxx). If that fails, provide the CCDI mapping CSV.
     • If labels are sample-based, keep sample indexing; however, this processor currently expects patient-level labels
       for multi-modal alignment and will error without a mapping.
-- Feature selection pipeline:
-    VarianceThreshold(threshold=0.01) -> SelectFdr(f_classif, alpha=0.05) -> SelectKBest(f_classif, k=top_k)
-  After selection, optional normalization can be applied (z-score and/or min–max).
-- Files written to: data/gdm/filtered/<Cancer_Type>/
-    mrna.parquet, mirna.parquet, methylation.parquet              # full filtered matrices (patients × features)
+- Feature selection pipeline (per-modality var_threshold / alpha / top_k from processor.labels):
+    non-zero in >= 50% of patients, non-zero mean, no NaN
+    -> VarianceThreshold(var_threshold) -> SelectFdr(f_classif, alpha) -> SelectKBest(f_classif, k=top_k)
+  If fewer than k features pass the FDR test (fdr_fallback: true, default), the k features with the
+  highest F-values after the variance filter are kept. After selection, min-max scaling to [0, 1].
+- Files written to: data/gdm/filtered/<portal>/<ct_slug>/<study_id>/
+    mrna.parquet, mirna.parquet, methylation.parquet, linear_cna.parquet   # selected matrices (patients × features)
+    feature_selection.tsv                                          # features left after each selection step
     mrna_train.parquet, mrna_test.parquet, ...                    # split matrices
     labels_train.csv, labels_test.csv                              # encoded labels aligned to splits
   CSV mirrors (*_all.csv, *_train.csv, *_test.csv) are written for debugging.
@@ -103,51 +108,69 @@ def feature_filter_scaler(
     *,
     standard: bool = False,
     minimax: bool = True,
-    mod_idx: int = 0,            # NEW: which modality's hyperparams to use
-) -> pd.DataFrame:
+    mod_idx: int = 0,            # which modality's hyperparameters to use
+    min_nonzero_frac: float = 0.5,
+    fallback_if_fdr_too_few: bool = True,
+    return_meta: bool = False,
+):
     """
-    Apply VarianceThreshold + FDR(ANOVA F) + SelectKBest to 'data' using
-    hyperparameters that can be per-modality lists or scalars.
+    Feature selection + scaling, as in the PCGS preprocessing (data_process.py):
 
-    var_threshold: float or list of floats (len = #modalities)
-    alpha:         float or list of floats (len = #modalities)
-    topFeature:    int   or list of ints   (len = #modalities)
-    mod_idx:       index of current modality in the configured list
+      0) numeric columns only
+      1) keep features that are non-zero in >= min_nonzero_frac of the patients, have a
+         non-zero mean and no missing values
+      2) VarianceThreshold(var_threshold) -> SelectFdr(ANOVA F, Benjamini-Hochberg, alpha)
+         -> SelectKBest(ANOVA F, k = topFeature)
+         If fewer than k features pass the FDR test and fallback_if_fdr_too_few is true,
+         the k features with the highest F-values after the variance filter are kept instead.
+      3) optional z-score (standard) and/or min-max (minimax) scaling of the selected features
+
+    var_threshold, alpha and topFeature can be scalars or per-modality lists (picked by mod_idx).
+    Returns the selected, scaled DataFrame; with return_meta=True, also a dict with the number of
+    features after each step and whether the fallback was used.
     """
-    # Select per-modality hyperparameters (or use scalars)
-    vt  = float(_pick_for_mod(var_threshold, mod_idx))
-    a   = float(_pick_for_mod(alpha, mod_idx))
-    k   = int(_pick_for_mod(topFeature, mod_idx))
+    vt = float(_pick_for_mod(var_threshold, mod_idx))
+    a = float(_pick_for_mod(alpha, mod_idx))
+    k = int(_pick_for_mod(topFeature, mod_idx))
 
-    tmp_filter = data.select_dtypes(include=["number"]).copy()
-    # keep columns that are non-zero in >= 50% of rows
-    tmp_filter = tmp_filter.loc[:, (tmp_filter != 0).sum(axis=0) >= (0.5 * tmp_filter.shape[0])]
-    # drop constant-mean columns and NaN columns
-    tmp_filter = tmp_filter.loc[:, tmp_filter.mean() != 0].dropna(axis=1)
+    tmp = data.select_dtypes(include=["number"]).copy()
+    meta = {"input": int(tmp.shape[1])}
+    tmp = tmp.loc[:, (tmp != 0).sum(axis=0) >= (min_nonzero_frac * tmp.shape[0])]
+    tmp = tmp.loc[:, tmp.mean(axis=0) != 0].dropna(axis=1)
+    meta["after_basic"] = int(tmp.shape[1])
+    y = labels.reindex(tmp.index)
 
-    pipe = Pipeline(
-        [
-            ("var_thresh", VarianceThreshold(threshold=vt)),
-            ("fdr", SelectFdr(score_func=f_classif, alpha=a)),
-            ("kbest", SelectKBest(score_func=f_classif, k=min(k, max(1, tmp_filter.shape[1]-1)))),
-        ]
-    )
-    pipe.fit(tmp_filter, labels)
+    cols_var = cols_fdr = pd.Index([])
+    n_var = n_fdr = 0
+    if tmp.shape[1]:
+        vt_sel = VarianceThreshold(threshold=vt).fit(tmp)
+        cols_var = tmp.columns[vt_sel.get_support()]
+        n_var = len(cols_var)
+        if n_var:
+            fdr = SelectFdr(score_func=f_classif, alpha=a).fit(tmp[cols_var], y)
+            cols_fdr = cols_var[fdr.get_support()]
+            n_fdr = len(cols_fdr)
+    meta.update(after_var=n_var, after_fdr=n_fdr, requested_k=k)
 
-    cols_vt = tmp_filter.columns[pipe.named_steps["var_thresh"].get_support()]
-    cols_fdr = cols_vt[pipe.named_steps["fdr"].get_support()] if "fdr" in pipe.named_steps else cols_vt
-    final_cols = cols_fdr[pipe.named_steps["kbest"].get_support()]
-
-    X_sel = pipe.transform(tmp_filter)
-    filtered_df = pd.DataFrame(X_sel, index=tmp_filter.index, columns=final_cols)
+    used_fallback = bool(fallback_if_fdr_too_few and n_fdr < k)
+    pool = cols_var if used_fallback else cols_fdr
+    if len(pool) == 0:
+        final_cols = pd.Index([])
+    else:
+        kb = SelectKBest(score_func=f_classif, k=min(k, len(pool))).fit(tmp[pool], y)
+        final_cols = pool[kb.get_support()]
+    filtered_df = tmp[final_cols].astype(float)
+    meta.update(final=int(filtered_df.shape[1]), used_fallback=used_fallback)
 
     if standard:
-        filtered_df = filtered_df.apply(lambda s: (s - s.mean()) / (s.std(ddof=0) + 1e-12), axis=0)
+        std = filtered_df.std(ddof=0).replace(0, np.nan)
+        filtered_df = ((filtered_df - filtered_df.mean()) / std).fillna(0.0)
     if minimax:
-        filtered_df = filtered_df.apply(lambda s: (s - s.min()) / (s.max() - s.min() + 1e-12), axis=0)
+        denom = (filtered_df.max() - filtered_df.min()).replace(0, np.nan)
+        filtered_df = ((filtered_df - filtered_df.min()) / denom).fillna(0.0)
 
     filtered_df.columns.name = None
-    return filtered_df
+    return (filtered_df, meta) if return_meta else filtered_df
 
 # ==========================
 # Label & output helpers
@@ -368,7 +391,7 @@ def _build_clinical_filtered(clin_pat: pd.DataFrame,
 def _find_omics_file(rawData_dir: Path, mod: str) -> Path:
     """
     Find a TSV written by extractor for the requested modality.
-    We accept common patterns per cBioPortal profile names.
+    We accept common patterns per cBioPortal profile names (matched case-insensitively).
     """
     patterns = {
         "mrna": [
@@ -384,12 +407,26 @@ def _find_omics_file(rawData_dir: Path, mod: str) -> Path:
             "*methyl*.tsv",
             "*hm450*.tsv",
         ],
+        "linear_cna": [                      # linear (continuous) copy-number values, not GISTIC calls
+            "*linear*cna*.tsv",
+            "*cna*linear*.tsv",
+            "*log2*cna*.tsv",
+        ],
     }
+    import fnmatch
+    files = sorted(p for p in Path(rawData_dir).iterdir() if p.is_file())
     for pat in patterns.get(mod, []):
-        hits = list(rawData_dir.glob(pat))
+        hits = [p for p in files if fnmatch.fnmatch(p.name.lower(), pat.lower())]
         if hits:
-            return sorted(hits)[0]
+            return hits[0]
     raise FileNotFoundError(f"No TSV found for modality '{mod}' in {rawData_dir}")
+
+OMICS_MODALITIES = ("mrna", "mirna", "methylation", "linear_cna")
+MODALITY_SYNONYMS = {"microrna": "mirna", "cna": "linear_cna", "cna_linear": "linear_cna"}
+
+# per modality: features after each selection step (filled by load_and_prepare)
+SELECTION_SUMMARY: List[dict] = []
+
 
 def load_and_prepare(
     rawData_dir: Path,
@@ -405,9 +442,12 @@ def load_and_prepare(
     var_threshold=0.01,
     alpha=0.05,
     select_features: bool = True,
+    fdr_fallback: bool = True,
 ):
     """select_features=False returns the aligned patient x feature matrices before feature
-    selection and scaling (used by benchmark.py, which refits the selection inside each CV fold)."""
+    selection and scaling (used by benchmark.py, which refits the selection inside each CV fold).
+    Feature counts after each selection step are left in SELECTION_SUMMARY."""
+    SELECTION_SUMMARY.clear()
     clin_pat = pd.read_csv(rawData_dir / "clinical_patients.csv")
     clin_sam = pd.read_csv(rawData_dir / "clinical_samples.csv")
 
@@ -484,7 +524,7 @@ def load_and_prepare(
             omics_dict[mod] = df_raw_num
             continue
 
-        df_filtered = feature_filter_scaler(
+        df_filtered, sel_meta = feature_filter_scaler(
             df,
             labels_aligned,
             var_threshold=var_threshold,
@@ -493,7 +533,14 @@ def load_and_prepare(
             standard=False,
             minimax=True,
             mod_idx=mi,
+            fallback_if_fdr_too_few=fdr_fallback,
+            return_meta=True,
         )
+        SELECTION_SUMMARY.append({"modality": mod, **sel_meta})
+        print(f"[processor] {cancer_type} {mod}: {sel_meta['input']} features -> basic filter "
+              f"{sel_meta['after_basic']} -> variance {sel_meta['after_var']} -> FDR {sel_meta['after_fdr']} "
+              f"-> kept {sel_meta['final']}" + (" (fewer than k passed FDR: top k by F after the variance "
+                                                "filter)" if sel_meta["used_fallback"] else ""))
         df_filtered = df_filtered.astype("float32")
         df_filtered.index.name = "patientId"
         omics_dict[mod] = df_filtered
@@ -598,8 +645,8 @@ def data_process():
 
         # modalities (normalize microrna->mirna)
         raw_mods = [m.lower() for m in (expr.get(ct, []) or [])]
-        syn = {"microrna": "mirna"}
-        modalities = [syn.get(m, m) for m in raw_mods if m in {"mrna","mirna","methylation"}]
+        modalities = [MODALITY_SYNONYMS.get(m, m) for m in raw_mods]
+        modalities = [m for m in modalities if m in OMICS_MODALITIES]
         if not modalities:
             print(f"[processor] SKIP {ct}: no valid modalities configured.")
             continue
@@ -614,6 +661,7 @@ def data_process():
         top_k = lc.get("top_k", 500)
         test_size = float(lc.get("test_size", 0.2))
         seed = int(lc.get("seed", 42))
+        fdr_fallback = bool(lc.get("fdr_fallback", True))
 
         for portal, study_id in studies:
             rawData_dir = fetch_root / portal / ct_slug / study_id
@@ -637,10 +685,12 @@ def data_process():
                 label_map=label_map,
                 var_threshold=var_threshold,
                 alpha=alpha,
+                fdr_fallback=fdr_fallback,
             )
 
             out_dir = Path("data/gdm/filtered") / portal / ct_slug / study_id
             out_dir.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame(SELECTION_SUMMARY).to_csv(out_dir / "feature_selection.tsv", sep="\t", index=False)
 
             # write clinical subsets
             if clinical_filtered_df is not None and not clinical_filtered_df.empty:

@@ -62,7 +62,7 @@ from .processor import feature_filter_scaler, load_and_prepare
 MODELS = ("mogonet", "naive_bayes", "random_forest")
 METRICS = ("acc", "f1", "auc")
 METRIC_NAMES = {"acc": "Accuracy", "f1": "Macro F1", "auc": "AUC"}
-OMICS = ("mrna", "mirna", "methylation")
+OMICS = ("mrna", "mirna", "methylation", "linear_cna")
 
 
 # ==========================
@@ -126,6 +126,7 @@ def _label_cfg(cfg: dict, ct: str) -> dict:
         "top_k": lc.get("top_k", 500),
         "test_size": float(lc.get("test_size", 0.2)),
         "random_state": int(lc.get("seed", 42)),
+        "fdr_fallback": bool(lc.get("fdr_fallback", True)),
     }
 
 
@@ -194,20 +195,20 @@ def load_cohort(cfg: dict, ct: str, portal: str, study_id: str, mods: List[str],
 # Per-fold features (fit on the training fold only)
 # ==========================
 def select_in_fold(X_tr: pd.DataFrame, X_te: pd.DataFrame, y_tr: pd.Series, mod_idx: int,
-                   var_threshold, alpha, top_k) -> Tuple[pd.DataFrame, pd.DataFrame]:
+                   var_threshold, alpha, top_k, fdr_fallback: bool = True) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """processor.feature_filter_scaler fitted on the training fold; the test fold gets the same
     columns, training-fold median imputation and training-fold min-max scaling."""
     try:
-        sel = feature_filter_scaler(X_tr, y_tr, var_threshold, alpha, top_k,
-                                    standard=False, minimax=False, mod_idx=mod_idx)
+        sel = feature_filter_scaler(X_tr, y_tr, var_threshold, alpha, top_k, standard=False,
+                                    minimax=False, mod_idx=mod_idx, fallback_if_fdr_too_few=fdr_fallback)
         cols = list(sel.columns)
     except ValueError as e:
         if "0 feature" not in str(e):
             raise
         cols = []
     if not cols:
-        raise RuntimeError("no feature passed VarianceThreshold + SelectFdr on this training fold; "
-                           "raise this modality's processor alpha (or lower var_threshold), or use "
+        raise RuntimeError("no feature passed the selection on this training fold; lower this "
+                           "modality's var_threshold (or set fdr_fallback: true), or use "
                            "benchmark.feature_selection: precomputed")
     tr = X_tr[cols].astype(float)
     te = X_te[cols].astype(float).fillna(tr.median())
@@ -243,7 +244,8 @@ def fold_views(X: Dict[str, pd.DataFrame], y: pd.Series, clin: Optional[pd.DataF
         else:
             try:
                 Xtr[m], Xte[m] = select_in_fold(X[m].loc[tr], X[m].loc[te], y.loc[tr], mi,
-                                                lc["var_threshold"], lc["alpha"], lc["top_k"])
+                                                lc["var_threshold"], lc["alpha"], lc["top_k"],
+                                                lc["fdr_fallback"])
             except RuntimeError as e:
                 raise RuntimeError(f"{m}: {e}") from e
     if clinical_features and clin is not None:

@@ -90,6 +90,7 @@ from .graph_ai import (
     tensors_from_numpy_lists,
     test_epoch,
     load_model_bundle,
+    _build_clinical_view,
 )
 from .graph_constructor import(
     MOGONETGraphParams,
@@ -108,7 +109,8 @@ def _cfg() -> dict:
 
 
 def _slug(s: str) -> str:
-    return str(s).replace(" ", "_")
+    # same folder names as extractor / processor / graph_ai ("Wilms Tumor" -> "wilms_tumor")
+    return str(s).replace(" ", "_").lower()
 
 
 def _mods_for(ct: str, cfg: dict) -> List[str]:
@@ -319,15 +321,27 @@ def _study_for_ct(cfg: dict, ct: str) -> Tuple[str, str]:
     return "cbio", "unknown_study"
 
 
-def _load_proc_for_study(portal: str, ct: str, study_id: str, mods: Sequence[str]):
+def _load_proc_for_study(portal: str, ct: str, study_id: str, mods: Sequence[str],
+                         clinical_cfg: Optional[dict] = None):
     """
     Load processed train/test feature matrices + labels for a cancer type/study/portal.
-    Supports any view in 'mods', including 'clinical'.
+    Supports any view in 'mods', including 'clinical', which is rebuilt from
+    clinical_train/test.parquet exactly as graph_ai_model() builds it for training.
     """
     root = Path("data/gdm/filtered") / portal / _slug(ct) / study_id
     X_tr, X_te = {}, {}
 
     for m in mods:
+        if m == "clinical":
+            c_tr = pd.read_parquet(root / "clinical_train.parquet")
+            c_te = pd.read_parquet(root / "clinical_test.parquet")
+            c_tr["patientId"] = c_tr["patientId"].astype(str)
+            c_te["patientId"] = c_te["patientId"].astype(str)
+            X_tr[m], X_te[m] = _build_clinical_view(c_tr.set_index("patientId"), c_te.set_index("patientId"),
+                                                    clinical_cfg or {})
+            if X_tr[m] is None:
+                raise FileNotFoundError(f"[post] clinical view could not be rebuilt from {root}.")
+            continue
         p_tr = root / f"{m}_train.parquet"
         p_te = root / f"{m}_test.parquet"
         if not p_tr.exists() or not p_te.exists():
@@ -372,8 +386,16 @@ def _load_proc_for_study(portal: str, ct: str, study_id: str, mods: Sequence[str
 
 
 def _expected_in_dims(model_dict, num_view: int):
-    # Each encoder E{i} has gc1.weight: [in_dim, hidden]
-    return [int(model_dict[f"E{i+1}"].gc1.weight.shape[0]) for i in range(num_view)]
+    # GCN encoders: gc1.weight is [in_dim, hidden]; the clinical view (Identity_E) feeds its
+    # classifier directly, so its input dim is the classifier's in_features
+    dims = []
+    for i in range(num_view):
+        enc = model_dict[f"E{i+1}"]
+        if hasattr(enc, "gc1"):
+            dims.append(int(enc.gc1.weight.shape[0]))
+        else:
+            dims.append(int(model_dict[f"C{i+1}"].clf.in_features))
+    return dims
 
 
 def _order_mods_like_meta(mods: Sequence[str], meta: Dict[str, any]) -> List[str]:
@@ -484,8 +506,11 @@ def _baseline_probs(
     for m in mods:
         Xtr = X_tr_aln[m].to_numpy(dtype=np.float32)
         Xte = X_te_aln[m].to_numpy(dtype=np.float32)
-        radius = compute_adaptive_radius_parameter_mogonet(Xtr, params)
-        A_trte = build_trte_block_adjacency_mogonet(Xtr, Xte, radius=radius, params=params)
+        if m == "clinical":                       # no graph for the clinical view (identity), as in training
+            A_trte = None
+        else:
+            radius = compute_adaptive_radius_parameter_mogonet(Xtr, params)
+            A_trte = build_trte_block_adjacency_mogonet(Xtr, Xte, radius=radius, params=params)
         X_trte_list.append(np.vstack([Xtr, Xte]))
         A_trte_list.append(A_trte)
 
@@ -509,10 +534,14 @@ def run_feature_selection():
     for ct in cts:
         ct_slug = _slug(ct)
 
-        # load trained model bundle + metadata
-        ckpt_dir = Path((cfg.get("model") or {}).get("checkpoints_dir", "data/models")) / ct_slug
-        if not (ckpt_dir / "meta.json").exists():
-            print(f"[post] {ct}: checkpoints not found at {ckpt_dir}; skipping selection.")
+        # load trained model bundle + metadata, saved by graph_ai_model() under
+        # <model_mogonet.checkpoints_dir>/<portal>/<ct_slug>/<study_id>/ (older runs: <checkpoints_dir>/<ct>/)
+        portal, study_id = _study_for_ct(cfg, ct)
+        ckpt_root = Path((cfg.get("model_mogonet") or cfg.get("model") or {}).get("checkpoints_dir", "data/models"))
+        candidates = [ckpt_root / portal / ct_slug / study_id, ckpt_root / ct_slug, ckpt_root / str(ct).replace(" ", "_")]
+        ckpt_dir = next((c for c in candidates if (c / "meta.json").exists()), None)
+        if ckpt_dir is None:
+            print(f"[post] {ct}: checkpoints not found at {candidates[0]}; skipping selection.")
             continue
         model_dict, meta = load_model_bundle(ckpt_dir)
 
@@ -522,13 +551,12 @@ def run_feature_selection():
             raise RuntimeError("Checkpoint meta.json missing 'views'. Retrain to save 'views' in meta.")
         mods_to_load = trained_views
 
-        # Resolve (portal, study_id) for this cancer type (so we can find processed matrices)
-        portal, study_id = _study_for_ct(cfg, ct)
         print(f"[post] {ct}: portal={portal} study_id={study_id} trained_views={mods_to_load}")
 
         # load processed data + labels using the trained view set
         try:
-            X_tr, X_te, y_tr, y_te, filt_root = _load_proc_for_study(portal, ct, study_id, mods_to_load)
+            clin_cfg = ((cfg.get("model_mogonet") or {}).get("clinical_view") or {})
+            X_tr, X_te, y_tr, y_te, filt_root = _load_proc_for_study(portal, ct, study_id, mods_to_load, clin_cfg)
         except FileNotFoundError as e:
             print(str(e))
             continue
@@ -560,12 +588,15 @@ def run_feature_selection():
         for m in mods_to_load:
             Xtr = X_tr_aln[m].to_numpy(dtype=np.float32)
             Xte = X_te_aln[m].to_numpy(dtype=np.float32)
-            rad = compute_adaptive_radius_parameter_mogonet(Xtr, params)
             base_X_trte[m] = np.vstack([Xtr, Xte])
+            if m == "clinical":
+                base_A_trte[m] = None
+                continue
+            rad = compute_adaptive_radius_parameter_mogonet(Xtr, params)
             base_A_trte[m] = build_trte_block_adjacency_mogonet(Xtr, Xte, radius=rad, params=params)
 
         # ----- per-modality ablation (KEEP TRAINED ORDER); omics only -----
-        OMICS = {"mrna", "mirna", "methylation"}
+        OMICS = {"mrna", "mirna", "methylation", "linear_cna"}
         out_dir = out_root / portal / ct_slug / study_id
         out_dir.mkdir(parents=True, exist_ok=True)
 
