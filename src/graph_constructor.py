@@ -33,9 +33,11 @@ Outputs
   (optional) .graphml exports for inspection
 
 Config (config/pipeline_config.yaml)
-  graph:
-    edges_per_node: 15     # neighbor budget used to derive the cosine distance cutoff on TRAIN
+  patient_similarity_graph:   # (older name: graph)
+    edges_per_node: 5      # neighbor budget used to derive the cosine distance cutoff on TRAIN (default 15)
     save_graphml: false    # write GraphML alongside .npz if true
+  model_mogonet:
+    clinical_view: {enabled: true, graph: true}   # also build the clinical graph
 
   cancer_type_interest: ["Wilms Tumor", ...]
   expression_profiles:
@@ -343,15 +345,20 @@ def graph_construct():
     Writes:
       data/gdm/graphs/<portal>/<Cancer_Type>/<study_id>/{mod}_train.adj.npz
       data/gdm/graphs/<portal>/<Cancer_Type>/<study_id>/{mod}_trte_block.adj.npz
-      (optional) .graphml if enabled in config.graph.save_graphml
+      (optional) .graphml if enabled in config.patient_similarity_graph.save_graphml
+      clinical_*.adj.npz (+ .graphml) as well when model_mogonet.clinical_view.enabled and
+      .graph are true, from clinical_train/test.parquet built as graph_ai builds the clinical view
     """
     cfg = _load_cfg()
 
     ct_list = cfg.get("cancer_type_interest", [])
     expr = cfg.get("expression_profiles", {})
-    graph_cfg = (cfg.get("graph", {}) or {})
+    # settings live under patient_similarity_graph: in pipeline_config.yaml; graph: is the older name
+    graph_cfg = (cfg.get("patient_similarity_graph") or cfg.get("graph") or {})
     edges_per_node = int(graph_cfg.get("edges_per_node", 15))
     save_graphml = bool(graph_cfg.get("save_graphml", False))
+    clin_cfg = ((cfg.get("model_mogonet") or {}).get("clinical_view") or {})
+    clinical_graph = bool(clin_cfg.get("enabled", False)) and bool(clin_cfg.get("graph", False))
 
     # study maps
     c_map = _normalize_study_map(cfg.get("cBio_studyId", {}))
@@ -389,46 +396,86 @@ def graph_construct():
             out_dir = graphs_root / portal / ct_slug / study_id
             out_dir.mkdir(parents=True, exist_ok=True)
 
+            tag = f"{ct} [{portal}:{study_id}]"
             for mod in modalities:
                 tr_pq = ct_filtered / f"{mod}_train.parquet"
                 te_pq = ct_filtered / f"{mod}_test.parquet"
 
                 if not tr_pq.exists() or not te_pq.exists():
-                    print(f"[graph] SKIP {ct} [{portal}:{study_id}] / {mod}: missing {tr_pq.name} or {te_pq.name}.")
+                    print(f"[graph] SKIP {tag} / {mod}: missing {tr_pq.name} or {te_pq.name}.")
                     continue
 
                 # load matrices (rows = patients, cols = selected features)
                 df_tr = pd.read_parquet(tr_pq)
                 df_te = pd.read_parquet(te_pq)
+                _write_view_graphs(df_tr, df_te, mod, out_dir, params, save_graphml, tag)
 
-                # compute adaptive threshold on TRAIN, then build graphs
-                try:
-                    radius = compute_adaptive_radius_parameter_mogonet(df_tr, params)
-                    A_tr = build_train_adjacency_mogonet(df_tr, radius=radius, params=params)
-                    A_trte = build_trte_block_adjacency_mogonet(df_tr, df_te, radius=radius, params=params)
-                except Exception as e:
-                    print(f"[graph] ERROR {ct} [{portal}:{study_id}] / {mod}: {type(e).__name__}: {e}")
-                    continue
+            # clinical view, only when model_mogonet.clinical_view.graph is true
+            if clinical_graph:
+                df_tr, df_te = _clinical_matrices(ct_filtered, clin_cfg, tag)
+                if df_tr is not None:
+                    _write_view_graphs(df_tr, df_te, "clinical", out_dir, params, save_graphml, tag)
 
-                # save adjacency
-                p_train = out_dir / f"{mod}_train.adj.npz"
-                p_trte  = out_dir / f"{mod}_trte_block.adj.npz"
-                save_adjacency_npz(A_tr, p_train)
-                save_adjacency_npz(A_trte, p_trte)
-                print(f"[graph] {ct} [{portal}:{study_id}] / {mod}: wrote {p_train.name}, {p_trte.name}")
 
-                # optional GraphML (for inspection)
-                if save_graphml:
-                    try:
-                        g_train = out_dir / f"{mod}_train.graphml"
-                        g_trte  = out_dir / f"{mod}_trte_block.graphml"
-                        G_tr = csr_to_networkx(A_tr, node_ids=list(map(str, df_tr.index)))
-                        save_graph_graphml(G_tr, g_train)
-                        G_trte = csr_to_networkx(A_trte, node_ids=(list(map(str, df_tr.index)) + list(map(str, df_te.index))))
-                        save_graph_graphml(G_trte, g_trte)
-                        print(f"[graph] {ct} [{portal}:{study_id}] / {mod}: wrote {g_train.name}, {g_trte.name}")
-                    except Exception as e:
-                        print(f"[graph] WARN {ct} [{portal}:{study_id}] / {mod}: GraphML export failed: {e}")
+def _write_view_graphs(df_tr: pd.DataFrame, df_te: pd.DataFrame, view: str, out_dir: Path,
+                       params: MOGONETGraphParams, save_graphml: bool, tag: str) -> None:
+    """TRAIN threshold -> <view>_train.adj.npz and <view>_trte_block.adj.npz (+ optional GraphML)."""
+    # compute adaptive threshold on TRAIN, then build graphs
+    try:
+        radius = compute_adaptive_radius_parameter_mogonet(df_tr, params)
+        A_tr = build_train_adjacency_mogonet(df_tr, radius=radius, params=params)
+        A_trte = build_trte_block_adjacency_mogonet(df_tr, df_te, radius=radius, params=params)
+    except Exception as e:
+        print(f"[graph] ERROR {tag} / {view}: {type(e).__name__}: {e}")
+        return
+
+    # save adjacency
+    p_train = out_dir / f"{view}_train.adj.npz"
+    p_trte  = out_dir / f"{view}_trte_block.adj.npz"
+    save_adjacency_npz(A_tr, p_train)
+    save_adjacency_npz(A_trte, p_trte)
+    print(f"[graph] {tag} / {view}: wrote {p_train.name}, {p_trte.name}")
+
+    # optional GraphML (for inspection)
+    if save_graphml:
+        try:
+            g_train = out_dir / f"{view}_train.graphml"
+            g_trte  = out_dir / f"{view}_trte_block.graphml"
+            G_tr = csr_to_networkx(A_tr, node_ids=list(map(str, df_tr.index)))
+            save_graph_graphml(G_tr, g_train)
+            G_trte = csr_to_networkx(A_trte, node_ids=(list(map(str, df_tr.index)) + list(map(str, df_te.index))))
+            save_graph_graphml(G_trte, g_trte)
+            print(f"[graph] {tag} / {view}: wrote {g_train.name}, {g_trte.name}")
+        except Exception as e:
+            print(f"[graph] WARN {tag} / {view}: GraphML export failed: {e}")
+
+
+def _clinical_matrices(ct_filtered: Path, clin_cfg: dict, tag: str):
+    """Clinical features exactly as graph_ai builds the clinical view for training (configured
+    columns, one-hot categoricals, min-max numerics), rows in labels_train/test.csv order."""
+    from .graph_ai import _build_clinical_view   # imported here: graph_ai imports this module
+
+    p_tr, p_te = ct_filtered / "clinical_train.parquet", ct_filtered / "clinical_test.parquet"
+    if not p_tr.exists() or not p_te.exists():
+        print(f"[graph] SKIP {tag} / clinical: missing {p_tr.name} or {p_te.name}.")
+        return None, None
+    c_tr = pd.read_parquet(p_tr)
+    c_te = pd.read_parquet(p_te)
+    for c in (c_tr, c_te):
+        c["patientId"] = c["patientId"].astype(str)
+    X_tr, X_te = _build_clinical_view(c_tr.set_index("patientId"), c_te.set_index("patientId"), clin_cfg)
+    if X_tr is None:
+        print(f"[graph] SKIP {tag} / clinical: none of the configured clinical features are present.")
+        return None, None
+
+    def in_label_order(X: pd.DataFrame, labels_csv: str) -> pd.DataFrame:
+        p = ct_filtered / labels_csv
+        if not p.exists():
+            return X
+        ids = pd.read_csv(p, index_col=0, header=None).index.astype(str)
+        return X.loc[ids.intersection(X.index)]
+
+    return in_label_order(X_tr, "labels_train.csv"), in_label_order(X_te, "labels_test.csv")
 
 
 # ==========================

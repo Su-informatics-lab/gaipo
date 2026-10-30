@@ -19,7 +19,8 @@ feature_selection (config benchmark.feature_selection)
 Models (config benchmark.models)
   mogonet        graph_ai.train_with_split: one GCN per omics view + VCDN fusion; hyperparameters
                  from model_mogonet. A clinical view is added when model_mogonet.clinical_view is
-                 enabled. Metrics are read at the last epoch (no early stopping on the test fold).
+                 enabled, with its own patient-similarity graph and GCN encoder when
+                 clinical_view.graph is true (otherwise straight to its classifier). Metrics are read at the last epoch (no early stopping on the test fold).
                  As in MOGONET, test patients are nodes of the train+test graph at inference
                  (their features, not their labels, are used).
   naive_bayes    sklearn GaussianNB on the concatenated views
@@ -111,6 +112,7 @@ def _mogonet_cfg(cfg: dict) -> dict:
         "lr_e": float(lr.get("enc", 5e-4)),
         "lr_c": float(lr.get("clf", 1e-3)),
         "device": device,
+        "clinical_graph": bool((m.get("clinical_view") or {}).get("graph", False)),
     }
 
 

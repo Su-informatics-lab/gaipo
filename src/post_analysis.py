@@ -90,6 +90,7 @@ from .graph_ai import (
     tensors_from_numpy_lists,
     test_epoch,
     load_model_bundle,
+    graph_view_names,
     _build_clinical_view,
 )
 from .graph_constructor import(
@@ -385,6 +386,13 @@ def _load_proc_for_study(portal: str, ct: str, study_id: str, mods: Sequence[str
     return X_tr, X_te, y_tr, y_te, root
 
 
+def _graph_views(meta: Dict, mods: Sequence[str]) -> List[str]:
+    """Views that were trained with a patient-similarity graph (meta.json "graph_views");
+    checkpoints written before that key existed had no clinical graph."""
+    gv = meta.get("graph_views")
+    return list(gv) if gv is not None else graph_view_names(mods, clinical_graph=False)
+
+
 def _expected_in_dims(model_dict, num_view: int):
     # GCN encoders: gc1.weight is [in_dim, hidden]; the clinical view (Identity_E) feeds its
     # classifier directly, so its input dim is the classifier's in_features
@@ -502,11 +510,12 @@ def _baseline_probs(
     _validate_dims_against_model(model_dict, mods, X_tr_aln)
 
     params = MOGONETGraphParams(edges_per_node=edges_per_node)
+    graph_views = _graph_views(meta, mods)
     X_trte_list, A_trte_list = [], []
     for m in mods:
         Xtr = X_tr_aln[m].to_numpy(dtype=np.float32)
         Xte = X_te_aln[m].to_numpy(dtype=np.float32)
-        if m == "clinical":                       # no graph for the clinical view (identity), as in training
+        if m not in graph_views:                  # no graph (identity), as in training
             A_trte = None
         else:
             radius = compute_adaptive_radius_parameter_mogonet(Xtr, params)
@@ -585,11 +594,12 @@ def run_feature_selection():
         # ----- PRECOMPUTE TRTE BLOCKS FOR ALL TRAINED VIEWS (baseline, non-ablated) -----
         base_X_trte = {}
         base_A_trte = {}
+        graph_views = _graph_views(meta, mods_to_load)
         for m in mods_to_load:
             Xtr = X_tr_aln[m].to_numpy(dtype=np.float32)
             Xte = X_te_aln[m].to_numpy(dtype=np.float32)
             base_X_trte[m] = np.vstack([Xtr, Xte])
-            if m == "clinical":
+            if m not in graph_views:
                 base_A_trte[m] = None
                 continue
             rad = compute_adaptive_radius_parameter_mogonet(Xtr, params)

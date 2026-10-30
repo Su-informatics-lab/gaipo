@@ -126,6 +126,10 @@ model_mogonet:
     enabled: true
     # Choose any columns that appear in processor’s clinical_train/test.parquet
     features: [AGE, CLINICAL_STAGE, RACE, SEX, ETHNICITY]
+    # false: clinical features -> own classifier -> VCDN fusion (no graph)
+    # true:  patient-similarity graph + GCN encoder, as for the omics views (graph_construct
+    #        also writes clinical_*.adj.npz / .graphml)
+    graph: false
 
 # 12) post_analysis.py
 post_analysis:

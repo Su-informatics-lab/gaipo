@@ -15,7 +15,12 @@ This module expects you to have used processor.py and graph_constructor.py befor
 
 Note:
 - If a requested clinical feature is missing in a study, it’s silently skipped; if none are available the clinical view is dropped for that study.
-- Identity adjacency is used for the clinical view (no graph structure, no MLP), but it still blends seamlessly with other views via VCDN.
+- The clinical view has two modes (model_mogonet.clinical_view.graph):
+    false (default)  no graph: clinical features go straight to their own classifier (identity
+                     encoder, no MLP), whose output is fused with the omics views by VCDN.
+    true             same as an omics view: a patient-similarity graph (cosine, edges_per_node,
+                     training-graph radius) and a GCN encoder, then its classifier and VCDN.
+  The checkpoint meta.json lists the graph-encoded views under "graph_views".
 - Checkpoints are saved under data/models/<portal>/<ct_slug>/<study_id>/ to mirror your filtered/graphs directories.
 
 Input path:
@@ -213,6 +218,12 @@ class VCDN(nn.Module):
 # ==========================
 # Model/optim factory
 # ==========================
+def graph_view_names(view_names: Sequence[str], clinical_graph: bool = False) -> List[str]:
+    """Views that get a patient-similarity graph and a GCN encoder: every omics view, and the
+    clinical view only when model_mogonet.clinical_view.graph is true."""
+    return [v for v in view_names if v != "clinical" or clinical_graph]
+
+
 def init_model_dict(
     view_names: List[str],
     num_class: int,
@@ -220,17 +231,21 @@ def init_model_dict(
     dim_he_list: Sequence[int],
     dim_hc: int,
     gcn_dropout: float = 0.5,
+    graph_views: Optional[Sequence[str]] = None,
 ):
     """
-    view_names aligns with dim_list order. For 'clinical' view we use Identity_E (no GCN).
+    view_names aligns with dim_list order. Views in graph_views get a GCN encoder; the others
+    (by default only 'clinical') use Identity_E and feed their classifier directly.
     """
+    if graph_views is None:
+        graph_views = graph_view_names(view_names, clinical_graph=False)
     model_dict: Dict[str, nn.Module] = {}
     for i, vname in enumerate(view_names):
-        if vname == "clinical":
-            model_dict[f"E{i+1}"] = Identity_E()
-        else:
+        if vname in graph_views:
             model_dict[f"E{i+1}"] = GCN_E(dim_list[i], dim_he_list, gcn_dropout)
-        model_dict[f"C{i+1}"] = Classifier_1(dim_he_list[-1] if vname != "clinical" else dim_list[i], num_class)
+        else:
+            model_dict[f"E{i+1}"] = Identity_E()
+        model_dict[f"C{i+1}"] = Classifier_1(dim_he_list[-1] if vname in graph_views else dim_list[i], num_class)
     if len(view_names) >= 2:
         model_dict["C"] = VCDN(len(view_names), num_class, dim_hc)
     return model_dict
@@ -377,7 +392,7 @@ def _load_processor_outputs(portal: str, study_id: str, ct: str, mods: List[str]
 
 
 # ==========================
-# Clinical feature builder (no-graph view)
+# Clinical feature builder (used with or without a clinical graph)
 # ==========================
 def _build_clinical_view(
     clin_tr: pd.DataFrame,
@@ -443,8 +458,10 @@ def train_with_split(
     device: str = "cpu",
     save_dir: Optional[Path] = None,
     seed: int = 1234,
+    clinical_graph: bool = False,
 ) -> Tuple[Dict[str, float], Dict[str, nn.Module]]:
     set_seed(seed)  # benchmark.py passes one seed per CV repeat; graph_ai_model() keeps 1234
+    graph_views = graph_view_names(view_names, clinical_graph)
 
     # Label normalization (robust)
     classes = pd.Index(np.unique(np.concatenate([pd.Series(y_tr).values,
@@ -454,7 +471,7 @@ def train_with_split(
     y_tr_idx = np.asarray([class_to_idx[v] for v in pd.Series(y_tr).values], dtype=np.int64)
     y_te_idx = np.asarray([class_to_idx[v] for v in pd.Series(y_te).values], dtype=np.int64)
 
-    # Build adjacencies per view (clinical uses identity/no-graph)
+    # Build adjacencies per view (views outside graph_views, i.e. clinical by default, use identity)
     params = MOGONETGraphParams(edges_per_node=edges_per_node)
     A_tr_list, A_trte_list, X_tr_list, X_trte_list = [], [], [], []
     te_idx = list(range(len(y_tr_idx), len(y_tr_idx) + len(y_te_idx)))
@@ -468,7 +485,7 @@ def train_with_split(
         Xtr = Xtr_df.to_numpy(dtype=np.float32)
         Xte = Xte_df.to_numpy(dtype=np.float32)
 
-        if vname == "clinical":
+        if vname not in graph_views:
             A_tr, A_trte = None, None  # identity will be used in tensor conversion
         else:
             radius = compute_adaptive_radius_parameter_mogonet(Xtr, params)
@@ -490,7 +507,8 @@ def train_with_split(
     # Models
     dim_list = [X_tr_dict[v].shape[1] for v in view_names]
     dim_hvcdn = int(pow(num_class, len(view_names)))
-    model_dict = init_model_dict(view_names, num_class, dim_list, dim_he_list, dim_hvcdn)
+    model_dict = init_model_dict(view_names, num_class, dim_list, dim_he_list, dim_hvcdn,
+                                 graph_views=graph_views)
     for k in model_dict:
         model_dict[k] = model_dict[k].to(device)
 
@@ -529,6 +547,7 @@ def train_with_split(
             "num_view": int(len(view_names)),
             "num_class": int(num_class),
             "views": view_names,
+            "graph_views": list(graph_views),
             "dim_list": [int(d) for d in dim_list],
             "dim_he_list": [int(d) for d in dim_he_list],
             "edges_per_node": int(edges_per_node),
@@ -578,7 +597,9 @@ def load_model_bundle(ckpt_dir: Path):
     dim_he_list = meta["dim_he_list"]
     dim_hvcdn = pow(num_class, num_view)
 
-    model_dict = init_model_dict(views, num_class, dim_list, dim_he_list, dim_hvcdn)
+    # checkpoints written before "graph_views" existed: clinical had no graph
+    model_dict = init_model_dict(views, num_class, dim_list, dim_he_list, dim_hvcdn,
+                                 graph_views=meta.get("graph_views"))
     for key, model in model_dict.items():
         p = ckpt_dir / f"{key}.pt"
         if p.exists():
@@ -610,6 +631,7 @@ def graph_ai_model():
       clinical_view:
         enabled: true
         features: [AGE, CLINICAL_STAGE, RACE, SEX, ETHNICITY]  # must exist in clinical_* tables
+        graph: false   # true: patient-similarity graph + GCN encoder, as for the omics views
     """
     cfg = _load_cfg()
     model_cfg = cfg.get("model_mogonet", {}) or {}
@@ -640,6 +662,7 @@ def graph_ai_model():
 
     clinical_cfg = (model_cfg.get("clinical_view") or {})
     clinical_enabled = bool(clinical_cfg.get("enabled", False))
+    clinical_graph = bool(clinical_cfg.get("graph", False))
 
     for ct in ct_list:
         studies = _studies_for_ct(ct, c_map, p_map)
@@ -660,7 +683,8 @@ def graph_ai_model():
             continue
 
         for portal, study_id in studies:
-            print(f"[graph_ai] {ct} [{portal}:{study_id}] — mode={mode}, views={view_names}")
+            print(f"[graph_ai] {ct} [{portal}:{study_id}] — mode={mode}, views={view_names}"
+                  + (f", clinical graph={'yes' if clinical_graph else 'no'}" if "clinical" in view_names else ""))
 
             # Load matrices/labels (+ clinical trains/test frames)
             X_tr_dict, X_te_dict, y_tr, y_te, clin_tr, clin_te, root = _load_processor_outputs(
@@ -697,6 +721,7 @@ def graph_ai_model():
                     num_epoch=num_epoch,
                     device=device,
                     save_dir=ckpt_dir,
+                    clinical_graph=clinical_graph,
                 )
                 print(f"[graph_ai] {ct} [{portal}:{study_id}]: final metrics: {metrics}")
                 print(f"[graph_ai] {ct} [{portal}:{study_id}]: checkpoints saved -> {ckpt_dir}")
