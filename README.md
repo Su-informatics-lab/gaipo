@@ -111,13 +111,7 @@ git clone https://github.com/Su-informatics-lab/gaipo.git
 cd GAIPO
 ```
 
-Before running the pipeline, review the project configuration and set the required:
-
-- Data-source endpoints and credentials.
-- Cohort, diagnosis, and modality selections.
-- Input, output, cache, and checkpoint locations.
-- Feature-selection and graph-construction parameters.
-- Model, training, and random-seed settings.
+Before running the pipeline, set the cancer types, search terms, studies, modalities and labels in `config/pipeline_config.yaml`; [Configuring a run](#configuring-a-run-configpipeline_configyaml) walks through every block with Wilms tumor and glioma as the example.
 
 Do not commit access tokens, passwords, controlled-data identifiers, or other secrets to the repository.
 
@@ -133,6 +127,99 @@ python -m pip install -r requirements.txt
 ```
 
 Run commands from the repository root so that Python can resolve the `src` package and the pipeline can locate its configuration and output directories.
+
+## Configuring a run (`config/pipeline_config.yaml`)
+
+Every step reads one file, `config/pipeline_config.yaml` (or the file named by the `CONFIG_PATH` environment variable). Edit it in place before a run, and keep a copy of the version used for each set of published results. The blocks are keyed by **cancer type**: the same name (e.g. `"Wilms Tumor"`, `"Glioma"`) must be used in every block, and output folders use its lower-case form with underscores (`wilms_tumor`, `glioma`).
+
+| Block | Read by | What it sets |
+| --- | --- | --- |
+| `cancer_type_interest` | every step | The cancer types to run. Types not listed are skipped. |
+| `default_type_terms`, `custom_type_terms` | `data_fetch` | Search strings sent to the CCDI Data Federation per cancer type (case-insensitive substring match on the diagnosis). Put new cancer types in `custom_type_terms`. |
+| `search` | `data_fetch` | `use_ontology: false` (default) searches with the lists above; `true` builds the search from the NCIt concept set named in `search.cohorts` (see `config/ontology/`). |
+| `cBio_studyId`, `pedcBio_studyId` | `data_extract` onward | The cBioPortal / PedcBioPortal studies per cancer type (one ID or a list). Only CCDI subjects that are patients of these studies are extracted. |
+| `expression_profiles` | `data_extract`, `process` | The omics per cancer type: `mrna`, `mirna`, `methylation`, `linear_cna`. |
+| `processor.labels` | `process`, `benchmark` | Per cancer type: the label column, where it is (`samples` or `patients`), the map from its values to 0/1, and the feature-selection settings. |
+| `patient_similarity_graph`, `model_mogonet`, `post_analysis`, `benchmark` | later steps | Graph, model, analysis and cross-validation settings. |
+
+### Example: Wilms tumor and glioma
+
+**1. Cancer types.** List both:
+
+```yaml
+cancer_type_interest:
+  - "Wilms Tumor"
+  - "Glioma"
+```
+
+**2. Search terms for `data_fetch`.** The fixed lists for both types are already defined; keep the ontology search off to use them:
+
+```yaml
+default_type_terms:
+  Wilms Tumor: ["wilms", "nephroblastoma", "8960/3 : Nephroblastoma, NOS"]
+  Glioma: ["glioma", "high-grade glioma", "low-grade glioma"]
+search:
+  use_ontology: false
+```
+
+To search with the ontology layer instead, set `use_ontology: true` (both types already have a cohort under `search.cohorts`). Also set `compare_with_config: false` unless you want the ontology-vs-fixed-list report: with `true`, both sets of queries are sent. For a cancer type not listed here, add its terms under `custom_type_terms`, for example `Neuroblastoma: ["neuroblastoma"]`.
+
+**3. Studies for `data_extract`.** Wilms tumor comes from cBioPortal; glioma from PedcBioPortal (PBTA, used for modeling) and cBioPortal (CPTAC):
+
+```yaml
+cBio_studyId:
+  "Wilms Tumor": "wt_target_2018_pub"
+  "Glioma": "brain_cptac_2020"
+pedcBio_studyId:
+  "Glioma": "pbta_all"
+```
+
+PedcBioPortal needs a data-access token. Set it in the shell (or in a git-ignored `.env` file next to `docker-compose.yml`) and leave `auth:` in the YAML as `null`:
+
+```bash
+export PEDCBIOPORTAL_API_TOKEN="<your token>"
+```
+
+**4. Omics.**
+
+```yaml
+expression_profiles:
+  "Wilms Tumor": [mrna, mirna, methylation]
+  "Glioma": [mrna, linear_cna]
+```
+
+**5. Labels for `process`.** The map must cover every value of the label column in the extracted study (the processor stops otherwise), so look the values up after `data_extract`:
+
+```bash
+python -c "import pandas as pd; print(pd.read_csv('data/fetch/cbioportal_api_request/pedcbio/glioma/pbta_all/clinical_samples.csv')['CANCER_TYPE'].value_counts())"
+```
+
+```yaml
+processor:
+  labels:
+    Wilms Tumor:
+      source: samples
+      column: HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR
+      map: "FHWT=0,DAWT=1"
+    Glioma:
+      source: samples
+      column: CANCER_TYPE
+      map: "<low-grade value>=0,<high-grade value>=1"
+```
+
+The labels apply to every study of a cancer type. If two studies of one type use different values (as PBTA and CPTAC do), process one study at a time by commenting out the other study ID in step 3.
+
+**6. Run and check.**
+
+```bash
+python -m src.main --call data_fetch      # both cancer types; about 2 h for these two with the fixed lists
+python -m src.main --call data_extract
+python scripts/fetch_counts.py            # counts for the run (see below)
+```
+
+`data_fetch` writes `data/fetch/ccdi_api_request/subject_ids/<type>.csv` and `sample_ids/<type>.csv` (one row per CCDI source and ID), `data/fetch/ccdi_api_request/search_skipped.tsv` (sources that returned no records, e.g. PCDC and ccdi-ecDNA), and `data/gdm/indexes/idmap.parquet`. `data_extract` writes `data/fetch/cbioportal_api_request/<portal>/<type>/<study_id>/` with `clinical_patients.csv`, `clinical_samples.csv` and one TSV per omics profile. Both steps overwrite earlier outputs, so copy `data/fetch/` before rerunning if you need the previous files.
+
+`scripts/fetch_counts.py` reports the subject and sample IDs found per cancer type and CCDI source (and unique across sources), and the patients, samples and omics samples extracted per study. With `--compare <folder with an earlier ccdi_api_request/ and cbioportal_api_request/>` it also lists the IDs added or removed since that run.
 
 ## Running the Pipeline
 

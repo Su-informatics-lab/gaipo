@@ -1,4 +1,6 @@
 # config/pipeline_config.yaml
+# How to edit this file for a run (with Wilms tumor and glioma as the example):
+# README.md, section "Configuring a run".
 
 # 0) optional auth (kept null by default)
 auth:
