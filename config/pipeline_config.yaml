@@ -67,15 +67,15 @@ search:
 # 5) which types you want right now
 cancer_type_interest:
   - "Wilms Tumor"
-#  - "Glioma"
+  - "Glioma"
 
 # 6) study IDs (used when writing idmap parquet)
 cBio_studyId:
   "Wilms Tumor": "wt_target_2018_pub"
   "Glioma": "brain_cptac_2020"
-# pedcBio_studyId:
+pedcBio_studyId:
 #  "Wilms Tumor": null
-#  "Glioma": "pbta_all"
+  "Glioma": "pbta_all"
 
 # What expression profiles to pull for each type
 # valid keys: mrna, mirna, methylation, linear_cna
