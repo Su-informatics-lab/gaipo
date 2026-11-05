@@ -578,6 +578,14 @@ def load_model_dict(ckpt_dir: Path, model_dict: Dict[str, torch.nn.Module]):
             model.load_state_dict(state)
     return model_dict
 
+def save_metrics(out_dir: Path, record: Dict) -> Path:
+    """Test-set metrics of a trained model as JSON (metrics.json next to meta.json)."""
+    out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "metrics.json"
+    with open(path, "w") as f:
+        json.dump(record, f, indent=2)
+    return path
+
 def save_model_bundle(ckpt_dir: Path, model_dict: Dict[str, torch.nn.Module], meta: Dict):
     ckpt_dir = Path(ckpt_dir); ckpt_dir.mkdir(parents=True, exist_ok=True)
     save_model_dict(ckpt_dir, model_dict)
@@ -724,7 +732,20 @@ def graph_ai_model():
                     clinical_graph=clinical_graph,
                 )
                 print(f"[graph_ai] {ct} [{portal}:{study_id}]: final metrics: {metrics}")
-                print(f"[graph_ai] {ct} [{portal}:{study_id}]: checkpoints saved -> {ckpt_dir}")
+                save_metrics(ckpt_dir, {
+                    "cancer_type": ct, "portal": portal, "study_id": study_id,
+                    "evaluation": "held-out test split (data_process labels_train.csv / labels_test.csv)",
+                    "n_train": int(len(y_tr)), "n_test": int(len(y_te)),
+                    "class_counts_test": {str(k): int(v) for k, v in y_te.value_counts().sort_index().items()},
+                    "views": list(view_names), "clinical_graph": clinical_graph,
+                    "metrics": {"accuracy": metrics.get("acc"), "macro_f1": metrics.get("f1"),
+                                "auc": metrics.get("auc")},
+                    "read_at": "last training epoch (no early stopping)",
+                    "hyperparameters": {"edges_per_node": edges_per_node, "gcn_hidden": list(dim_he_list),
+                                        "epochs": {"pretrain": num_epoch_pretrain, "train": num_epoch},
+                                        "lr": {"enc_pretrain": lr_e_pre, "enc": lr_e, "clf": lr_c}},
+                })
+                print(f"[graph_ai] {ct} [{portal}:{study_id}]: checkpoints and metrics.json saved -> {ckpt_dir}")
 
             elif mode == "infer":
                 # For brevity, inference can be wired similarly to train_with_split (load bundle & forward).

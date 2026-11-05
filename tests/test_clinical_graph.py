@@ -109,6 +109,9 @@ def test_pipeline_with_and_without_clinical_graph(study, use_graph):
     meta = json.loads((root / "data/models/cbio/test_tumor/study1/meta.json").read_text())
     assert meta["views"] == ["mrna", "mirna", "clinical"]
     assert meta["graph_views"] == (["mrna", "mirna", "clinical"] if use_graph else ["mrna", "mirna"])
+    m = json.loads((root / "data/models/cbio/test_tumor/study1/metrics.json").read_text())
+    assert set(m["metrics"]) == {"accuracy", "macro_f1", "auc"} and 0 <= m["metrics"]["accuracy"] <= 1
+    assert m["n_train"] > 0 and m["n_test"] > 0 and m["views"] == meta["views"]
     model_dict, _ = graph_ai.load_model_bundle(root / "data/models/cbio/test_tumor/study1")
     assert isinstance(model_dict["E3"], graph_ai.GCN_E if use_graph else graph_ai.Identity_E)
 
