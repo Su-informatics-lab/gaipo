@@ -74,18 +74,20 @@ def test_grade_of_class_from_map_and_override():
 def test_labels_rebuilt_from_extract_when_process_outputs_are_missing(tmp_path, monkeypatch):
     """No labels_train.csv: the labels are rebuilt from the extract, as data_process would build them."""
     import numpy as np
-    pts = [f"P{i}" for i in range(10)]
-    detailed = ["Low-grade glioma, KIAA1549-BRAF"] * 6 + ["High-grade glioma, IDH-mutant"] * 3 + ["Oligodendroglioma"]
-    ctype = ["Low-grade glioma"] * 6 + ["High-grade glioma"] * 3 + ["Low-grade glioma"]
+    pts = [f"P{i}" for i in range(12)]
+    detailed = (["Low-grade glioma, KIAA1549-BRAF"] * 6 + ["High-grade glioma, IDH-mutant"] * 3
+                + ["Oligodendroglioma", "Ganglioglioma", "Low-grade glioma, BRAF V600E"])
+    # the last two have no low/high-grade label (another tumor type, blank): left out, as with drop_unmapped
+    ctype = ["Low-grade glioma"] * 6 + ["High-grade glioma"] * 3 + ["Low-grade glioma", "Ganglioglioma", None]
     raw = tmp_path / "data/fetch/cbioportal_api_request/pedcbio/glioma/pbta_all"
     raw.mkdir(parents=True)
-    pd.DataFrame({"patientId": pts, "AGE": range(10)}).to_csv(raw / "clinical_patients.csv", index=False)
+    pd.DataFrame({"patientId": pts, "AGE": range(12)}).to_csv(raw / "clinical_patients.csv", index=False)
     smp = pd.DataFrame({"sampleId": [f"S{p}" for p in pts], "patientId": pts,
                         "CANCER_TYPE": ctype, "CANCER_TYPE_DETAILED": detailed})
     smp.to_csv(raw / "clinical_samples.csv", index=False)
     rng = np.random.default_rng(0)
     for name in ("pbta_all_rna_seq_mrna.tsv", "pbta_all_linear_CNA.tsv"):
-        m = pd.DataFrame(rng.normal(size=(5, 10)), columns=smp.sampleId)
+        m = pd.DataFrame(rng.normal(size=(5, 12)), columns=smp.sampleId)
         m.insert(0, "hugoGeneSymbol", [f"G{i}" for i in range(5)])
         m.to_csv(raw / name, sep="\t", index=False)
     ccdi = tmp_path / "data/fetch/ccdi_api_request/sample_ids"
@@ -110,5 +112,6 @@ def test_labels_rebuilt_from_extract_when_process_outputs_are_missing(tmp_path, 
     assert flow["label 0 (Low Grade)"] == 7 and flow["label 1 (High Grade)"] == 3
     assert flow["test"] == 2
     assert flow["concept grade determined"] == 9 and flow["concept grade agrees with label"] == 9
-    assert "rebuilt from the current extract" in (out / "summary.md").read_text()
+    md = (out / "summary.md").read_text()
+    assert "rebuilt from the current extract" in md and "Ganglioglioma (1)" in md and "<missing> (1)" in md
     assert not (tmp_path / "data/gdm").exists()                      # read-only

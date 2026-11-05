@@ -207,7 +207,7 @@ processor:
       map: "<low-grade value>=0,<high-grade value>=1"
 ```
 
-The labels apply to every study of a cancer type. If two studies of one type use different values (as PBTA and CPTAC do), process one study at a time by commenting out the other study ID in step 3.
+The labels apply to every study of a cancer type. If two studies of one type use different values (as PBTA and CPTAC do), process one study at a time by commenting out the other study ID in step 3. To model only the classes in the map (e.g. low- vs high-grade glioma when the extract also holds other tumor types or blank values), add `drop_unmapped: true` under the cancer type: samples whose value is missing or not in the map are then left out, and the processor prints how many per value.
 
 **6. Run and check.**
 

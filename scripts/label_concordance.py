@@ -93,6 +93,9 @@ def grade_of_class(label_map: Optional[str], override: Optional[str]) -> Dict[in
     return out
 
 
+LEFT_OUT: Dict[str, int] = {}     # label values outside the map, left out when rebuilding from the extract
+
+
 def labels_from_files(mdir: Path) -> pd.DataFrame:
     y = []
     for split in ("train", "test"):
@@ -103,7 +106,7 @@ def labels_from_files(mdir: Path) -> pd.DataFrame:
 
 def labels_from_extract(cfg: dict, ct: str, portal: str, study: str, lc: dict) -> pd.DataFrame:
     """Modeling-cohort labels exactly as data_process builds them, without feature selection or writing."""
-    from src.processor import MODALITY_SYNONYMS, OMICS_MODALITIES, load_and_prepare
+    from src.processor import LABELS_LEFT_OUT, MODALITY_SYNONYMS, OMICS_MODALITIES, load_and_prepare
     raw = Path("data/fetch/cbioportal_api_request") / portal / slug(ct) / study
     if not raw.exists():
         raise SystemExit(f"{raw} not found: run data_extract first")
@@ -115,12 +118,13 @@ def labels_from_extract(cfg: dict, ct: str, portal: str, study: str, lc: dict) -
                                modalities=mods, label_source=lc.get("source", "samples"),
                                label_column=lc.get("column"), test_size=float(lc.get("test_size", 0.2)),
                                random_state=int(lc.get("seed", 42)), label_map=lc.get("map"),
-                               select_features=False)
+                               select_features=False, drop_unmapped=True)
     except ValueError as e:
         raise SystemExit(f"could not build the labels as data_process would: {e}\n"
                          f"Fix processor.labels.{ct} in the config (README, 'Labels for process'), "
                          "or pass --labels-dir with the labels of the run you modeled.")
     y_tr, y_te = out[2], out[3]
+    LEFT_OUT.update(LABELS_LEFT_OUT)
     return pd.concat([pd.DataFrame({"label": v.astype(int).values, "split": sp}, index=v.index.astype(str))
                       for sp, v in (("train", y_tr), ("test", y_te))])
 
@@ -188,6 +192,9 @@ def main() -> None:
         y = labels_from_extract(cfg, ct, portal, study, lc)
         label_source = ("rebuilt from the current extract with processor.load_and_prepare "
                         "(same label map, omics alignment and split as data_process)")
+        if LEFT_OUT:
+            label_source += ("; samples with a label value outside the map were left out: "
+                             + ", ".join(f"{k} ({v})" for k, v in LEFT_OUT.items()))
     y["label_grade"] = y.label.map(g_of)
 
     # source label values (display only)

@@ -258,7 +258,14 @@ def _build_binary_labels_general(
     mapping_series: Optional[pd.Series],  # index=sampleId, values=patientId
     label_map_override: Optional[Dict[str, int]] = None,
     collapse_to_patient: bool = True,
+    drop_unmapped: bool = False,
 ) -> Tuple[pd.Series, Dict[int, str]]:
+    """
+    Binary labels from one clinical column. With a label map, every value must be in the map,
+    unless drop_unmapped=True: then samples (or patients) whose value is missing or not in the map
+    are left out and counted in LABELS_LEFT_OUT.
+    """
+    LABELS_LEFT_OUT.clear()
     if label_source not in {"patients", "samples"}:
         raise ValueError("label_source must be 'patients' or 'samples'")
 
@@ -269,9 +276,22 @@ def _build_binary_labels_general(
 
     if label_map_override is not None:
         mapped = ser.map({k: int(v) for k, v in label_map_override.items()})
-        if mapped.isna().any():
-            missing = sorted(ser[mapped.isna()].unique().tolist())
-            raise ValueError(f"Label values not covered by label_map: {missing}")
+        bad = mapped.isna()
+        if bad.any():
+            # missing values are NaN (pandas >= 3 keeps them through astype(str)) or "nan" (pandas 2)
+            shown = ser[bad].map(lambda v: "<missing>" if pd.isna(v) or str(v).strip() in ("", "nan", "None")
+                                 else str(v)).value_counts()
+            listing = "; ".join(f"{k!r} ({n})" for k, n in shown.items())
+            unit = "samples" if label_source == "samples" else "patients"
+            if not drop_unmapped:
+                raise ValueError(f"Label values not covered by label_map ({unit}): {listing}. Add them to "
+                                 f"the map, or set drop_unmapped: true to leave those {unit} out.")
+            LABELS_LEFT_OUT.update({str(k): int(n) for k, n in shown.items()})
+            print(f"[processor] {label_column}: {int(bad.sum())} {unit} left out (value not in the label map): {listing}")
+            mapped = mapped[~bad]
+            if mapped.empty:
+                raise ValueError(f"No {label_column} value matches the label map {sorted(label_map_override)}; "
+                                 f"values found: {listing}")
         labels = mapped.astype(int)
         inv = {int(v): k for k, v in label_map_override.items()}
     else:
@@ -426,6 +446,8 @@ MODALITY_SYNONYMS = {"microrna": "mirna", "cna": "linear_cna", "cna_linear": "li
 
 # per modality: features after each selection step (filled by load_and_prepare)
 SELECTION_SUMMARY: List[dict] = []
+# label values left out with drop_unmapped (value -> number of samples or patients)
+LABELS_LEFT_OUT: Dict[str, int] = {}
 
 
 def load_and_prepare(
@@ -442,6 +464,7 @@ def load_and_prepare(
     var_threshold=0.01,
     alpha=0.05,
     select_features: bool = True,
+    drop_unmapped: bool = False,
     fdr_fallback: bool = True,
 ):
     """select_features=False returns the aligned patient x feature matrices before feature
@@ -471,6 +494,7 @@ def load_and_prepare(
         clin_sam=clin_sam,
         mapping_series=mapping_series,
         label_map_override=user_map,
+        drop_unmapped=drop_unmapped,
         collapse_to_patient=True,
     )
 
@@ -662,6 +686,7 @@ def data_process():
         test_size = float(lc.get("test_size", 0.2))
         seed = int(lc.get("seed", 42))
         fdr_fallback = bool(lc.get("fdr_fallback", True))
+        drop_unmapped = bool(lc.get("drop_unmapped", False))
 
         for portal, study_id in studies:
             rawData_dir = fetch_root / portal / ct_slug / study_id
@@ -686,6 +711,7 @@ def data_process():
                 var_threshold=var_threshold,
                 alpha=alpha,
                 fdr_fallback=fdr_fallback,
+                drop_unmapped=drop_unmapped,
             )
 
             out_dir = Path("data/gdm/filtered") / portal / ct_slug / study_id
