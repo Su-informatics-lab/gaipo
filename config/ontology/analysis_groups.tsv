@@ -14,4 +14,7 @@ glioma	NCIT:C4050	Oligoastrocytoma
 glioma	NCIT:C3903	Mixed Glioma
 glioma	NCIT:C4318	Gliomatosis Cerebri
 glioma	NCIT:C129309	Diffuse Midline Glioma, H3 K27M-Mutant
+glioma	NCIT:C132067	Low Grade Glioma
+glioma	NCIT:C185368	Diffuse Midline Glioma, H3 K27-Altered
+glioma	NCIT:C185369	Diffuse Midline Glioma, EGFR-Mutant
 wilms_tumor	NCIT:C3267	Wilms Tumor

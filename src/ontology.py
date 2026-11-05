@@ -13,11 +13,15 @@ Mapping knowledge lives in data files under config/ontology/, not in code:
     element_map.yaml               element level: source column -> standard data element (priority order)
     source_terms.sssom.tsv         value level:   source code/label -> NCIt concept
     concept_xrefs.sssom.tsv        NCIt concept -> ICD-O-3 / SNOMED CT / ICD-10-CM
-    concept_relations.tsv          NCIt disease -> typical primary site (fallback inference)
+    concept_relations.tsv          NCIt disease -> typical primary site (fallback inference), grade;
+                                   is_a links to the nearest curated ancestor
     icdo3_morphology_blocks.tsv    ICD-O-3 morphology block -> GDC case.disease_type
 
 NCIt concept -> GDC permissible value is NOT typed by hand: it is read from the termDef
 (NCIt code) that the bundled GDC dictionary (_terms_enum.yaml) attaches to every enum value.
+Source values map to the most specific NCIt concept; when the dictionary has no value for that
+concept, the value of its nearest ancestor (is_a in concept_relations.tsv) is used, so the
+dictionary's coarser granularity limits only the derived GDC value, not the concept.
 
 Resolution is deterministic (exact code match, then normalised-label match). Anything that
 does not resolve is returned as unmapped and written to a review file; nothing is guessed.
@@ -147,6 +151,12 @@ class OntologyLayer:
 
         self._gdc_index, self._gdc_enums = self._build_gdc_index(Path(schemas_dir))
 
+        # is_a: concept -> parents (nearest curated ancestors), used for inheritance only
+        isa = self.relations[self.relations.relation == "is_a"]
+        self._parents: Dict[str, List[str]] = {}
+        for r in isa.itertuples(index=False):
+            self._parents.setdefault(r.subject_id, []).append(r.object_id)
+
     # ---------- GDC dictionary: NCIt code -> permissible value ----------
     @staticmethod
     def _build_gdc_index(schemas_dir: Path):
@@ -222,22 +232,49 @@ class OntologyLayer:
             source_value=str(raw), matched_on=row.subject_id,
         )
 
-    # ---------- concept -> other terminologies ----------
-    def xref(self, concept_id: str, prefix: str) -> Optional[Tuple[str, str, str]]:
-        """First cross-reference of a concept into a terminology: (code, label, predicate)."""
-        hit = self.xrefs[(self.xrefs.subject_id == concept_id)
-                         & self.xrefs.object_id.str.startswith(prefix + ":")]
-        if hit.empty:
-            return None
-        r = hit.iloc[0]
-        return r.object_id.split(":", 1)[1], r.object_label, r.predicate_id
+    # ---------- concept hierarchy (is_a) ----------
+    def ancestors(self, concept_id: Optional[str]) -> List[str]:
+        """Curated ancestors of a concept, nearest first (breadth-first over is_a)."""
+        out: List[str] = []
+        frontier = list(self._parents.get(concept_id or "", []))
+        while frontier:
+            nxt = []
+            for c in frontier:
+                if c not in out and c != concept_id:
+                    out.append(c)
+                    nxt.extend(self._parents.get(c, []))
+            frontier = nxt
+        return out
 
-    def related(self, concept_id: str, relation: str) -> Optional[Tuple[str, str]]:
-        hit = self.relations[(self.relations.subject_id == concept_id)
-                             & (self.relations.relation == relation)]
-        if hit.empty:
-            return None
-        return hit.iloc[0].object_id, hit.iloc[0].object_label
+    def _self_and_ancestors(self, concept_id: Optional[str], inherit: bool) -> List[str]:
+        if not concept_id:
+            return []
+        return [concept_id] + (self.ancestors(concept_id) if inherit else [])
+
+    # ---------- concept -> other terminologies ----------
+    def xref(self, concept_id: str, prefix: str, inherit: bool = False) -> Optional[Tuple[str, str, str]]:
+        """
+        First cross-reference of a concept into a terminology: (code, label, predicate).
+        inherit=True falls back to the nearest ancestor's cross-reference; the predicate is then
+        skos:broadMatch (the concept is narrower than the code), so such a code is never asserted.
+        """
+        for i, c in enumerate(self._self_and_ancestors(concept_id, inherit)):
+            hit = self.xrefs[(self.xrefs.subject_id == c)
+                             & self.xrefs.object_id.str.startswith(prefix + ":")]
+            if not hit.empty:
+                r = hit.iloc[0]
+                return r.object_id.split(":", 1)[1], r.object_label, (r.predicate_id if i == 0
+                                                                      else "skos:broadMatch")
+        return None
+
+    def related(self, concept_id: str, relation: str, inherit: bool = True) -> Optional[Tuple[str, str]]:
+        """Object of a concept relation; by default inherited from the nearest ancestor that has one."""
+        for c in self._self_and_ancestors(concept_id, inherit):
+            hit = self.relations[(self.relations.subject_id == c)
+                                 & (self.relations.relation == relation)]
+            if not hit.empty:
+                return hit.iloc[0].object_id, hit.iloc[0].object_label
+        return None
 
     def disease_type_for_morphology(self, morph: Optional[str]) -> Optional[str]:
         """ICD-O-3 '8960/3' -> GDC disease_type via the ICD-O-3 block table."""
@@ -247,9 +284,21 @@ class OntologyLayer:
         hit = self.blocks[(self.blocks.start <= n) & (self.blocks.end >= n)]
         return None if hit.empty else hit.iloc[0].gdc_disease_type
 
-    def gdc_value(self, concept_id: Optional[str], node: str, prop: str) -> Optional[str]:
-        vals = self.gdc_values(node, prop).get(concept_id or "", [])
-        return sorted(vals)[0] if vals else None
+    def gdc_value_from(self, concept_id: Optional[str], node: str, prop: str,
+                       inherit: bool = True) -> Tuple[Optional[str], Optional[str]]:
+        """
+        (GDC value, concept that supplied it). The concept's own termDef is used first; when the
+        dictionary has none, the nearest ancestor's (e.g. Low Grade Glioma -> Glioma, NOS).
+        """
+        index = self.gdc_values(node, prop)
+        for c in self._self_and_ancestors(concept_id, inherit):
+            vals = index.get(c, [])
+            if vals:
+                return sorted(vals)[0], c
+        return None, None
+
+    def gdc_value(self, concept_id: Optional[str], node: str, prop: str, inherit: bool = True) -> Optional[str]:
+        return self.gdc_value_from(concept_id, node, prop, inherit)[0]
 
     # ---------- element-level: per-subject annotation ----------
     def _resolve_element(self, element: str, tables: Dict[str, pd.DataFrame],
@@ -312,17 +361,21 @@ class OntologyLayer:
             # up from the concept. A looked-up code is ASSERTED (written to morphology / OMOP)
             # only if every step was an exactMatch; a broad/close chain (e.g. "Low Grade Glioma"
             # -> Glioma -> 9380/3) is used only to place the case in its ICD-O-3 block.
+            # An ancestor's code (inherit=True) comes back as broadMatch, so it only places the case
+            # in its ICD-O-3 block (Low Grade Glioma -> Glioma -> 9380/3 -> "Gliomas").
             morph = d.matched_on.split(":", 1)[1] if (d.matched_on or "").startswith("ICDO3M:") else None
             morph_exact = morph is not None
             if morph is None and d.ok:
-                x = self.xref(d.concept_id, "ICDO3M")
+                x = self.xref(d.concept_id, "ICDO3M", inherit=True)
                 if x:
                     morph = x[0]
                     morph_exact = d.predicate == "skos:exactMatch" and x[2] == "skos:exactMatch"
             morph_asserted = morph if morph_exact else None
             topo = t.matched_on.split(":", 1)[1] if (t.matched_on or "").startswith("ICDO3T:") else None
             snomed = self.xref(d.concept_id, "SNOMEDCT") if d.ok else None
-            icd10 = self.xref(d.concept_id, "ICD10CM") if d.ok else None
+            icd10 = self.xref(d.concept_id, "ICD10CM", inherit=True) if d.ok else None
+            pdx, pdx_from = self.gdc_value_from(d.concept_id, "diagnosis", "primary_diagnosis")
+            grade = self.related(d.concept_id, "has_grade") if d.ok else None
             rows.append({
                 "subject_id": sid,
                 # disease
@@ -346,7 +399,11 @@ class OntologyLayer:
                 "omop_icdo3_code": f"{morph_asserted}-{topo}" if morph_asserted and topo else None,
                 # GDC values derived from concepts
                 "gdc_disease_type": self.disease_type_for_morphology(morph),
-                "gdc_primary_diagnosis": self.gdc_value(d.concept_id, "diagnosis", "primary_diagnosis"),
+                "gdc_primary_diagnosis": pdx,
+                "gdc_primary_diagnosis_concept": pdx_from,      # != disease concept: from an ancestor
+                "grade_concept_id": grade[0] if grade else None,
+                "grade_concept_label": grade[1] if grade else None,
+                "gdc_tumor_grade": self.gdc_value(grade[0], "diagnosis", "tumor_grade") if grade else None,
                 "gdc_morphology": morph_asserted if morph_asserted in self._morph_enum() else None,
                 "gdc_primary_site": self.gdc_value(t.concept_id, "case", "primary_site"),
                 "gdc_tissue_or_organ_of_origin": self.gdc_value(t.concept_id, "diagnosis",

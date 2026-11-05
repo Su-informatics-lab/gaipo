@@ -77,4 +77,4 @@ def test_benchmark_counts_gains_runtime_and_precision(bench, tmp_path):
 
 def test_terms_only_lists_the_cohort_concepts(bench, tmp_path):
     concepts, terms = bench.ontology_tables(["Glioma"])
-    assert len(concepts) == 12 and concepts.n_terms.sum() == len(terms) == 93
+    assert len(concepts) == 15 and concepts.n_terms.sum() == len(terms) == 95

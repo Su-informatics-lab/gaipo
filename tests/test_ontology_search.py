@@ -47,7 +47,7 @@ def test_minimal_queries_and_regex():
     ("wilms_tumor", "Wilms Tumor, favorable histology", "term_only", None),
     ("wilms_tumor", "Clear cell sarcoma of kidney", "no_match", None),
     ("glioma", "9421/1 : Pilocytic astrocytoma", "concept", "NCIT:C4047"),
-    ("glioma", "Low-grade glioma/astrocytoma (WHO grade I/II)", "concept", "NCIT:C3059"),
+    ("glioma", "Low-grade glioma/astrocytoma (WHO grade I/II)", "concept", "NCIT:C132067"),
     ("glioma", "Ganglioglioma", "outside_cohort", "NCIT:C3788"),
     ("glioma", "Ependymoma", "outside_cohort", "NCIT:C3017"),
 ])

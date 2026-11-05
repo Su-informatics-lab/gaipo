@@ -21,9 +21,11 @@ source value ──SSSOM──▶ NCIt concept ──GDC termDef / ICD-O-3 block
 | `element_map.yaml` | element | Which source columns feed each standard data element, in priority order, and which GDC properties it fills |
 | `source_terms.sssom.tsv` | value | Source codes/labels → NCIt (add a row per new synonym or code) |
 | `concept_xrefs.sssom.tsv` | value | NCIt → ICD-O-3 morphology, SNOMED CT, ICD-10-CM |
-| `concept_relations.tsv` | concept | Disease → typical primary site (used only when no topography code) |
+| `concept_relations.tsv` | concept | Disease → typical primary site (used only when no topography code); disease → grade (`has_grade`, fills GDC `diagnosis.tumor_grade`); `is_a` to the nearest ancestor, from which a concept inherits what it lacks (GDC value, site, grade, ICD-O-3 block) |
 | `icdo3_morphology_blocks.tsv` | rule | ICD-O-3 morphology block → GDC `case.disease_type` |
 | `analysis_groups.tsv` | cohort | Cohort → set of NCIt concepts (search terms for `data_fetch`; counts in `scripts/ontology_report.py`) |
+
+Source values map to the **most specific** NCIt concept (e.g. "Low-grade glioma, KIAA1549-BRAF" → Low Grade Glioma, C132067). The GDC dictionary is coarser, so a concept without a GDC value takes the value of its nearest `is_a` ancestor (Low Grade Glioma → Glioma → "Glioma, NOS"), recorded in `gdc_primary_diagnosis_concept`.
 
 NCIt → GDC value is **not** in these files: it is read from the NCIt `termDef` that the bundled
 GDC dictionary (`src/gdcdictionary/schemas/_terms_enum.yaml`) attaches to each enum value.
@@ -43,6 +45,12 @@ predicate (`skos:exactMatch`, `skos:broadMatch`, …), justification and confide
   the ontology search with the fixed term lists on the same CCDI records
   (`data/metadata/search_report/`) without changing the cohort files; tests:
   `pytest tests/test_ontology_search.py`.
+
+- From the data model to the modeling cohort: after `ontology_report.py` and `data_process`,
+  `python scripts/label_concordance.py Glioma --study pedcbio:pbta_all --compare cbio:brain_cptac_2020`
+  counts each step (concept, cohort, concept-derived `tumor_grade`, modeling cohort, label class) and
+  compares the concept-derived grade with the training label and across studies
+  (`data/metadata/label_concordance/`); tests: `pytest tests/test_label_concordance.py`.
 
 ## Adding a cancer type
 

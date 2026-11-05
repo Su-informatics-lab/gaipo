@@ -22,6 +22,7 @@ elements:
       - {node: case,      property: disease_type,      via: icdo3_block, cde: "caDSR 6161017"}
       - {node: diagnosis, property: primary_diagnosis, via: ncit,        cde: "caDSR 6161032"}
       - {node: diagnosis, property: morphology,        via: icdo3m,      cde: "caDSR 3226275"}
+      - {node: diagnosis, property: tumor_grade,       via: has_grade,   cde: "caDSR 2785839"}  # Low/High Grade from the concept
 
   primary_site:
     description: Anatomic site where the primary tumor arose

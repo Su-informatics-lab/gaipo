@@ -1,5 +1,11 @@
 # Concept-to-concept relations used for inference (not mappings).
 # typical_primary_site is used ONLY when the source has no ICD-O-3 topography code.
+# is_a links a concept to its nearest ancestor in this file (NCIt hierarchy, intermediate concepts
+#   skipped). A concept with no value of its own inherits from the nearest ancestor that has one:
+#   GDC primary_diagnosis, typical_primary_site, has_grade, and the ICD-O-3 block / ICD-10-CM code
+#   (never an asserted morphology code, which needs an exact chain).
+# has_grade links a disease concept to the grade concept that GDC diagnosis.tumor_grade binds
+#   ("Low Grade" = NCIt C14161, "High Grade" = NCIt C14158).
 subject_id	subject_label	relation	object_id	object_label	source	comment
 NCIT:C3267	Wilms Tumor	typical_primary_site	NCIT:C12415	Kidney	GAIPO curation	NCIt definition: the vast majority of cases arise from the kidney
 NCIT:C3059	Glioma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	
@@ -14,3 +20,13 @@ NCIT:C4050	Oligoastrocytoma	typical_primary_site	NCIT:C12439	Brain	GAIPO curatio
 NCIT:C4318	Gliomatosis Cerebri	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code
 NCIT:C129309	Diffuse Midline Glioma, H3 K27M-Mutant	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code
 NCIT:C3222	Medulloblastoma	typical_primary_site	NCIT:C12439	Brain	GAIPO curation	fallback only; spinal primaries need a topography code
+NCIT:C132067	Low Grade Glioma	is_a	NCIT:C3059	Glioma	NCIt	direct parent
+NCIT:C4822	Malignant Glioma	is_a	NCIT:C3059	Glioma	GAIPO curation	NCIt definition: a grade 3 or grade 4 glioma (NCIt files it under malignant neuroepithelial neoplasms)
+NCIT:C185368	Diffuse Midline Glioma, H3 K27-Altered	is_a	NCIT:C4822	Malignant Glioma	NCIt	via C182151 Diffuse Midline Glioma and C200758 WHO Grade 4 Glioma
+NCIT:C185369	Diffuse Midline Glioma, EGFR-Mutant	is_a	NCIT:C185368	Diffuse Midline Glioma, H3 K27-Altered	NCIt	direct parent
+NCIT:C129309	Diffuse Midline Glioma, H3 K27M-Mutant	is_a	NCIT:C185368	Diffuse Midline Glioma, H3 K27-Altered	NCIt	direct parent
+NCIT:C4047	Pilocytic Astrocytoma	is_a	NCIT:C132067	Low Grade Glioma	NCIt	via C177797 WHO Grade 1 Glioma
+NCIT:C3696	Subependymal Giant Cell Astrocytoma	is_a	NCIT:C132067	Low Grade Glioma	GAIPO curation	WHO CNS5 grade 1; NCIt C177797 (WHO Grade 1 Glioma) definition names it
+NCIT:C3058	Glioblastoma	is_a	NCIT:C4822	Malignant Glioma	GAIPO curation	WHO grade 4 glioma
+NCIT:C132067	Low Grade Glioma	has_grade	NCIT:C14161	Low Grade	GAIPO curation	GDC diagnosis.tumor_grade 'Low Grade'
+NCIT:C4822	Malignant Glioma	has_grade	NCIT:C14158	High Grade	GAIPO curation	GDC diagnosis.tumor_grade 'High Grade'

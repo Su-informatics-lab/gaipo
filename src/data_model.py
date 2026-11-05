@@ -1072,9 +1072,13 @@ def cbio_to_demographic(patients_csv_df: pd.DataFrame,
     demo["case_submitter_id"] = subj
     return demo.dropna(subset=["submitter_id"]).drop_duplicates("submitter_id")
 
-def cbio_to_diagnosis(patients_csv_df: pd.DataFrame) -> pd.DataFrame:
+def cbio_to_diagnosis(patients_csv_df: pd.DataFrame,
+                      ontology_ann: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """
     Minimal diagnosis table with tumor_stage (maps from CLINICAL_STAGE best-effort).
+    With the ontology layer on, primary_diagnosis, morphology and tumor_grade are added from the
+    NCIt concept of each case (src/ontology.py); a case whose concept implies no grade group
+    gets tumor_grade "Not Reported".
     """
     df = patients_csv_df.rename(columns={"patientId": "case_submitter_id"})
     if "CLINICAL_STAGE" in df.columns:
@@ -1085,7 +1089,14 @@ def cbio_to_diagnosis(patients_csv_df: pd.DataFrame) -> pd.DataFrame:
         "case_submitter_id": df["case_submitter_id"].astype(str),
         "tumor_stage": tumor_stage,
     })
-    return out.drop_duplicates("case_submitter_id").dropna(subset=["case_submitter_id"])
+    out = out.drop_duplicates("case_submitter_id").dropna(subset=["case_submitter_id"])
+    if ontology_ann is not None and not ontology_ann.empty:
+        a = ontology_ann.set_index("subject_id").reindex(out["case_submitter_id"])
+        out["primary_diagnosis"] = a["gdc_primary_diagnosis"].to_numpy()
+        out["morphology"] = a["gdc_morphology"].to_numpy()
+        grade = a["gdc_tumor_grade"] if "gdc_tumor_grade" in a.columns else pd.Series(index=a.index, dtype=object)
+        out["tumor_grade"] = grade.fillna("Not Reported").to_numpy()
+    return out
 
 def cbio_to_sample(samples_csv_df: pd.DataFrame,
                    strict: bool,
@@ -1349,7 +1360,7 @@ class DataModel:
         case = cbio_to_case(patients_csv_df, samples_csv_df, project_id,
                             strict=self.strict, cfg=self._cfg, ontology_ann=onto_ann)
         demo = cbio_to_demographic(patients_csv_df, strict=self.strict)
-        diag = cbio_to_diagnosis(patients_csv_df)
+        diag = cbio_to_diagnosis(patients_csv_df, ontology_ann=onto_ann)
         samp = cbio_to_sample(samples_csv_df, strict=self.strict, cfg=self._cfg)
         clin = cbio_to_clinical(patients_csv_df)
         idmap = build_idmap_from_samples(samples_csv_df)

@@ -35,3 +35,4 @@ NCIT:C9118	Sarcoma	skos:exactMatch	ICDO3M:8800/3	Sarcoma, NOS	semapv:ManualMappi
 NCIT:C3716	Primitive Neuroectodermal Tumor	skos:exactMatch	ICDO3M:9503/3	Neuroepithelioma, NOS	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
 NCIT:C9476	Desmoplastic Infantile Astrocytoma	skos:exactMatch	ICDO3M:9412/1	Desmoplastic infantile astrocytoma	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
 NCIT:C129309	Diffuse Midline Glioma, H3 K27M-Mutant	skos:exactMatch	ICDO3M:9385/3	Diffuse midline glioma, H3 K27M-mutant	semapv:ManualMappingCuration	1.0	ICD-O-3 code bound to this NCIt concept in GDC _terms_enum.yaml
+NCIT:C185368	Diffuse Midline Glioma, H3 K27-Altered	skos:exactMatch	ICDO3M:9385/3	Diffuse midline glioma, H3 K27M-mutant	semapv:ManualMappingCuration	1.0	WHO CNS5 (2021) codes this entity 9385/3; the ICD-O-3.2 label still reads 'H3 K27M-mutant'
