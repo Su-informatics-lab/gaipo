@@ -14,9 +14,12 @@ from the source column (processor.labels.<type>.column / map in pipeline_config.
 With --compare, it also compares the concept-derived grade of the patients that two studies share
 (e.g. pbta_all and brain_cptac_2020).
 
-Inputs (run after scripts/ontology_report.py and data_process):
+Inputs (run after scripts/ontology_report.py):
     data/metadata/ontology_report/<Type>__<portal>__<study>_concept_annotations.tsv
-    data/gdm/filtered/<portal>/<type>/<study>/labels_train.csv, labels_test.csv
+    labels of the modeling cohort, from either
+      data/gdm/filtered/<portal>/<type>/<study>/labels_train.csv, labels_test.csv   (written by data_process), or
+      the current extract, rebuilt read-only with processor.load_and_prepare (same label map, omics
+      alignment and train/test split as data_process; nothing is written under data/gdm)
     data/fetch/cbioportal_api_request/<portal>/<type>/<study>/clinical_samples.csv   (source label values)
 
 Outputs (data/metadata/label_concordance/<Type>__<portal>__<study>/):
@@ -28,6 +31,10 @@ Outputs (data/metadata/label_concordance/<Type>__<portal>__<study>/):
 
     python scripts/label_concordance.py Glioma --study pedcbio:pbta_all --compare cbio:brain_cptac_2020
     python scripts/label_concordance.py Glioma --study pedcbio:pbta_all --grade-of-class "0=Low Grade,1=High Grade"
+    python scripts/label_concordance.py Glioma --study pedcbio:pbta_all --labels-dir path/to/old/run/pbta_all
+
+--labels auto (default) uses labels_train/test.csv when they exist and otherwise rebuilds the labels
+from the extract; --labels files / --labels extract forces one source.
 
 Read-only for the pipeline.
 """
@@ -86,6 +93,38 @@ def grade_of_class(label_map: Optional[str], override: Optional[str]) -> Dict[in
     return out
 
 
+def labels_from_files(mdir: Path) -> pd.DataFrame:
+    y = []
+    for split in ("train", "test"):
+        s = pd.read_csv(mdir / f"labels_{split}.csv", index_col=0).iloc[:, 0]
+        y.append(pd.DataFrame({"label": s.astype(int).values, "split": split}, index=s.index.astype(str)))
+    return pd.concat(y)
+
+
+def labels_from_extract(cfg: dict, ct: str, portal: str, study: str, lc: dict) -> pd.DataFrame:
+    """Modeling-cohort labels exactly as data_process builds them, without feature selection or writing."""
+    from src.processor import MODALITY_SYNONYMS, OMICS_MODALITIES, load_and_prepare
+    raw = Path("data/fetch/cbioportal_api_request") / portal / slug(ct) / study
+    if not raw.exists():
+        raise SystemExit(f"{raw} not found: run data_extract first")
+    mods = [MODALITY_SYNONYMS.get(m.lower(), m.lower()) for m in (cfg.get("expression_profiles") or {}).get(ct, [])]
+    mods = [m for m in mods if m in OMICS_MODALITIES]
+    ccdi = Path("data/fetch/ccdi_api_request/sample_ids") / f"{slug(ct)}.csv"
+    try:
+        out = load_and_prepare(rawData_dir=raw, ccdi_csv=ccdi if ccdi.exists() else None, cancer_type=ct,
+                               modalities=mods, label_source=lc.get("source", "samples"),
+                               label_column=lc.get("column"), test_size=float(lc.get("test_size", 0.2)),
+                               random_state=int(lc.get("seed", 42)), label_map=lc.get("map"),
+                               select_features=False)
+    except ValueError as e:
+        raise SystemExit(f"could not build the labels as data_process would: {e}\n"
+                         f"Fix processor.labels.{ct} in the config (README, 'Labels for process'), "
+                         "or pass --labels-dir with the labels of the run you modeled.")
+    y_tr, y_te = out[2], out[3]
+    return pd.concat([pd.DataFrame({"label": v.astype(int).values, "split": sp}, index=v.index.astype(str))
+                      for sp, v in (("train", y_tr), ("test", y_te))])
+
+
 def load_annotations(report_dir: Path, ct: str, portal: str, study: str) -> pd.DataFrame:
     f = report_dir / f"{ct.replace(' ', '_')}__{portal}__{study}_concept_annotations.tsv"
     if not f.exists():
@@ -113,6 +152,10 @@ def main() -> None:
     ap.add_argument("--grade-of-class", help='e.g. "0=Low Grade,1=High Grade" (default: from the label map)')
     ap.add_argument("--config", default="config/pipeline_config.yaml")
     ap.add_argument("--report-dir", default="data/metadata/ontology_report")
+    ap.add_argument("--labels", choices=("auto", "files", "extract"), default="auto",
+                    help="where the modeling-cohort labels come from (see above)")
+    ap.add_argument("--labels-dir", help="folder with labels_train.csv / labels_test.csv "
+                                         "(default data/gdm/filtered/<portal>/<type>/<study>)")
     ap.add_argument("--out", default="data/metadata/label_concordance")
     args = ap.parse_args()
 
@@ -133,15 +176,18 @@ def main() -> None:
     a["concept_grade"] = a.gdc_tumor_grade.where(a.gdc_tumor_grade.isin(GRADES), NOT_DETERMINED)
 
     # modeling cohort
-    mdir = Path("data/gdm/filtered") / portal / slug(ct) / study
-    y = []
-    for split in ("train", "test"):
-        f = mdir / f"labels_{split}.csv"
-        if not f.exists():
-            raise SystemExit(f"{f} not found: run data_process first")
-        s = pd.read_csv(f, index_col=0).iloc[:, 0]
-        y.append(pd.DataFrame({"label": s.astype(int).values, "split": split}, index=s.index.astype(str)))
-    y = pd.concat(y)
+    mdir = Path(args.labels_dir) if args.labels_dir else Path("data/gdm/filtered") / portal / slug(ct) / study
+    have_files = all((mdir / f"labels_{sp}.csv").exists() for sp in ("train", "test"))
+    if args.labels == "files" and not have_files:
+        raise SystemExit(f"{mdir}/labels_train.csv or labels_test.csv not found")
+    if have_files and args.labels != "extract":
+        y = labels_from_files(mdir)
+        label_source = f"{mdir}/labels_train.csv + labels_test.csv"
+    else:
+        print(f"[labels] rebuilding the modeling-cohort labels from the extract (read-only), as data_process would")
+        y = labels_from_extract(cfg, ct, portal, study, lc)
+        label_source = ("rebuilt from the current extract with processor.load_and_prepare "
+                        "(same label map, omics alignment and split as data_process)")
     y["label_grade"] = y.label.map(g_of)
 
     # source label values (display only)
@@ -199,6 +245,7 @@ def main() -> None:
           f"Cohort concept set: `{group}` ({len(cohort)} NCIt concepts). Label column: "
           f"`{lc.get('source', 'samples')}.{col}`, map `{lc.get('map')}` "
           f"({', '.join(f'{k} = {v}' for k, v in sorted(g_of.items()))}).", "",
+          f"Modeling-cohort labels: {label_source}.", "",
           "## Flow", "", "| Step | n |", "| --- | ---: |"]
     md += [f"| {s.replace('  ', '&nbsp;&nbsp;')} | {n} |" for s, n in flow.itertuples(index=False)]
     md += ["", "## Concept-derived grade x label (modeling cohort)", "",

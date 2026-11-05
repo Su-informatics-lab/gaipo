@@ -46,7 +46,7 @@ The pipeline contains seven ordered stages:
 | 1 | `data_fetch` | Discover and retrieve cohort-level subject and sample identifiers. | Subject IDs, sample IDs, cohort manifests |
 | 2 | `data_extract` | Extract clinical and omics data from configured sources. | Raw or source-aligned TSV, Zarr, and Parquet files |
 | 3 | `data_model` | Harmonize extracted records into a GDC-shaped data model. | Case, sample, demographic, ID-map, and file-node Parquets |
-| 4 | `process` | Perform quality control, feature filtering, normalization, and dimensionality reduction. | Analysis-ready feature matrices and preprocessing metadata |
+| 4 | `data_process` | Perform quality control, feature filtering, normalization, and dimensionality reduction. | Analysis-ready feature matrices and preprocessing metadata |
 | 5 | `graph_construct` | Build patient-similarity graphs from processed features. | GraphML files, adjacency data, node features, and graph metadata |
 | 6 | `graph_ai_model` | Train and evaluate graph neural networks for prediction and survival tasks. | Model checkpoints, predictions, risk scores, and latent representations |
 | 7 | `post_analysis` | Interpret trained models and perform downstream statistical analyses. | Feature rankings, Kaplan–Meier analyses, log-rank results, and figures |
@@ -138,8 +138,8 @@ Every step reads one file, `config/pipeline_config.yaml` (or the file named by t
 | `default_type_terms`, `custom_type_terms` | `data_fetch` | Search strings sent to the CCDI Data Federation per cancer type (case-insensitive substring match on the diagnosis). Put new cancer types in `custom_type_terms`. |
 | `search` | `data_fetch` | `use_ontology: false` (default) searches with the lists above; `true` builds the search from the NCIt concept set named in `search.cohorts` (see `config/ontology/`). |
 | `cBio_studyId`, `pedcBio_studyId` | `data_extract` onward | The cBioPortal / PedcBioPortal studies per cancer type (one ID or a list). Only CCDI subjects that are patients of these studies are extracted. |
-| `expression_profiles` | `data_extract`, `process` | The omics per cancer type: `mrna`, `mirna`, `methylation`, `linear_cna`. |
-| `processor.labels` | `process`, `benchmark` | Per cancer type: the label column, where it is (`samples` or `patients`), the map from its values to 0/1, and the feature-selection settings. |
+| `expression_profiles` | `data_extract`, `data_process` | The omics per cancer type: `mrna`, `mirna`, `methylation`, `linear_cna`. |
+| `processor.labels` | `data_process`, `benchmark` | Per cancer type: the label column, where it is (`samples` or `patients`), the map from its values to 0/1, and the feature-selection settings. |
 | `patient_similarity_graph`, `model_mogonet`, `post_analysis`, `benchmark` | later steps | Graph, model, analysis and cross-validation settings. |
 
 ### Example: Wilms tumor and glioma
@@ -188,7 +188,7 @@ expression_profiles:
   "Glioma": [mrna, linear_cna]
 ```
 
-**5. Labels for `process`.** The map must cover every value of the label column in the extracted study (the processor stops otherwise), so look the values up after `data_extract`:
+**5. Labels for `data_process`.** The map must cover every value of the label column in the extracted study (the processor stops otherwise), so look the values up after `data_extract`:
 
 ```bash
 python -c "import pandas as pd; print(pd.read_csv('data/fetch/cbioportal_api_request/pedcbio/glioma/pbta_all/clinical_samples.csv')['CANCER_TYPE'].value_counts())"
@@ -232,7 +232,7 @@ python -m src.main --all
 This executes all stages in dependency order:
 
 ```text
-data_fetch → data_extract → data_model → process → graph_construct → graph_ai_model → post_analysis
+data_fetch → data_extract → data_process → data_model → graph_construct → graph_ai_model → post_analysis
 ```
 
 ### Run one stage
@@ -248,7 +248,7 @@ python -m src.main --call data_extract
 python -m src.main --call data_model
 
 # 4. Process data and select features
-python -m src.main --call process
+python -m src.main --call data_process
 
 # 5. Construct patient-similarity graphs
 python -m src.main --call graph_construct

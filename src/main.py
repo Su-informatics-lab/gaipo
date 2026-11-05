@@ -129,6 +129,8 @@ DEFAULT_ORDER = [
     "post_analysis",
 ]
 
+ALIASES = {"process": "data_process"}   # older docs call the processor step "process"
+
 # -----------------------------
 # CLI & plan resolution
 # -----------------------------
@@ -145,12 +147,13 @@ def _resolve_plan(args: argparse.Namespace) -> List[str]:
     if args.all:
         return DEFAULT_ORDER.copy()
     if args.until:
+        args.until = ALIASES.get(args.until, args.until)
         if args.until not in DEFAULT_ORDER:
             print(f"[ERROR] --until must be one of: {', '.join(DEFAULT_ORDER)}", file=sys.stderr)
             sys.exit(2)
         return DEFAULT_ORDER[: DEFAULT_ORDER.index(args.until) + 1]
     if args.call:
-        return [s.strip() for s in args.call.split(",") if s.strip()]
+        return [ALIASES.get(s.strip(), s.strip()) for s in args.call.split(",") if s.strip()]
     print("[ERROR] Specify one of: --call, --all, or --until", file=sys.stderr)
     sys.exit(2)
 

@@ -69,3 +69,46 @@ def test_grade_of_class_from_map_and_override():
     assert lc.grade_of_class(None, "0=High Grade,1=Low Grade") == {0: "High Grade", 1: "Low Grade"}
     agree, n, kappa = lc.cohen_kappa(pd.Series(["a", "a", "b", "b"]), pd.Series(["a", "a", "b", "a"]))
     assert (agree, n) == (3, 4) and round(kappa, 3) == 0.5
+
+
+def test_labels_rebuilt_from_extract_when_process_outputs_are_missing(tmp_path, monkeypatch):
+    """No labels_train.csv: the labels are rebuilt from the extract, as data_process would build them."""
+    import numpy as np
+    pts = [f"P{i}" for i in range(10)]
+    detailed = ["Low-grade glioma, KIAA1549-BRAF"] * 6 + ["High-grade glioma, IDH-mutant"] * 3 + ["Oligodendroglioma"]
+    ctype = ["Low-grade glioma"] * 6 + ["High-grade glioma"] * 3 + ["Low-grade glioma"]
+    raw = tmp_path / "data/fetch/cbioportal_api_request/pedcbio/glioma/pbta_all"
+    raw.mkdir(parents=True)
+    pd.DataFrame({"patientId": pts, "AGE": range(10)}).to_csv(raw / "clinical_patients.csv", index=False)
+    smp = pd.DataFrame({"sampleId": [f"S{p}" for p in pts], "patientId": pts,
+                        "CANCER_TYPE": ctype, "CANCER_TYPE_DETAILED": detailed})
+    smp.to_csv(raw / "clinical_samples.csv", index=False)
+    rng = np.random.default_rng(0)
+    for name in ("pbta_all_rna_seq_mrna.tsv", "pbta_all_linear_CNA.tsv"):
+        m = pd.DataFrame(rng.normal(size=(5, 10)), columns=smp.sampleId)
+        m.insert(0, "hugoGeneSymbol", [f"G{i}" for i in range(5)])
+        m.to_csv(raw / name, sep="\t", index=False)
+    ccdi = tmp_path / "data/fetch/ccdi_api_request/sample_ids"
+    ccdi.mkdir(parents=True)
+    pd.DataFrame({"sample_id": smp.sampleId, "subject_id": pts}).to_csv(ccdi / "glioma.csv", index=False)
+    rep = tmp_path / "data/metadata/ontology_report"
+    rep.mkdir(parents=True)
+    OntologyLayer(ROOT / "config/ontology", ROOT / "src/gdcdictionary/schemas").annotate_cases(
+        pd.read_csv(raw / "clinical_patients.csv"), smp).to_csv(
+        rep / "Glioma__pedcbio__pbta_all_concept_annotations.tsv", sep="\t", index=False)
+    cfg = {"processor": {"labels": {"Glioma": {"source": "samples", "column": "CANCER_TYPE",
+                                               "map": "Low-grade glioma=0,High-grade glioma=1"}}},
+           "expression_profiles": {"Glioma": ["mrna", "linear_cna"]}}
+    (tmp_path / "cfg.yaml").write_text(yaml.safe_dump(cfg))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["label_concordance.py", "Glioma", "--study", "pedcbio:pbta_all",
+                                      "--config", "cfg.yaml", "--group", "glioma"])
+    lc.main()
+    out = tmp_path / "data/metadata/label_concordance/Glioma__pedcbio__pbta_all"
+    flow = pd.read_csv(out / "flow.tsv", sep="\t").assign(step=lambda d: d.step.str.strip()).set_index("step").n
+    assert flow["modeling cohort (labels_train + labels_test)"] == 10
+    assert flow["label 0 (Low Grade)"] == 7 and flow["label 1 (High Grade)"] == 3
+    assert flow["test"] == 2
+    assert flow["concept grade determined"] == 9 and flow["concept grade agrees with label"] == 9
+    assert "rebuilt from the current extract" in (out / "summary.md").read_text()
+    assert not (tmp_path / "data/gdm").exists()                      # read-only
