@@ -395,13 +395,19 @@ def _derive_sex_at_birth(patients_df: pd.DataFrame) -> pd.Series:
             break
     if src is None:
         return pd.Series(["unknown"] * len(patients_df), index=patients_df.index, dtype=object)
-    s = src.astype(str).str.strip().str.lower()
+    s = _lower_text(src)
     out = pd.Series("unknown", index=s.index, dtype=object)
     out = out.mask(s.str.startswith("f"), "female")
     out = out.mask(s.str.startswith("m"), "male")
     out = out.mask(s.str.contains("not reported"), "not reported")
     out = out.mask(s.str.contains("unknown"), "unknown")
     return out.fillna("unknown")
+
+def _lower_text(x: pd.Series) -> pd.Series:
+    """Lower-cased, stripped text with missing values as "" (object dtype, never NaN).
+    pandas >= 3 keeps NaN through astype(str); str.contains then returns NaN, which
+    Series.mask cannot use as a condition ("bad operand type for unary ~: 'float'")."""
+    return x.astype(object).where(x.notna(), "").astype(str).str.strip().str.lower().astype(object)
 
 def _derive_vital_status(patients_df: pd.DataFrame) -> pd.Series:
     # cBioPortal OS_STATUS examples: "1:DECEASED", "0:LIVING"
@@ -423,7 +429,7 @@ def _norm_ethnicity(x: pd.Series) -> pd.Series:
     """
     if x is None:
         return pd.Series(["unknown"] * 0, dtype=object)
-    s = x.astype(str).str.strip().str.lower()
+    s = _lower_text(x)
 
     out = pd.Series("not reported", index=s.index, dtype=object)
     out = out.mask(s.str.contains(r"\bhispanic\b", regex=True), "hispanic or latino")
@@ -442,10 +448,10 @@ def _norm_race(x: pd.Series) -> pd.Series:
     """
     if x is None:
         return pd.Series(["unknown"] * 0, dtype=object)
-    s = x.astype(str).str.strip().str.lower()
+    s = _lower_text(x)
 
     # handle multi-valued entries like "white;asian" by taking first token
-    s = s.str.split(r"[;,/]| and ", regex=True).str[0].str.strip()
+    s = s.str.split(r"[;,/]| and ", regex=True).str[0].fillna("").astype(str).str.strip()
 
     out = pd.Series("not reported", index=s.index, dtype=object)
     out = out.mask(s.str.contains(r"\bwhite\b"), "white")
@@ -500,7 +506,7 @@ def _derive_sample_fields(samples_df: pd.DataFrame, cfg: dict) -> tuple[pd.Serie
 def _clinical_gender_from_sex(x: Optional[pd.Series]) -> pd.Series:
     if x is None:
         return pd.Series(["unspecified"] * 0, dtype=object)
-    s = x.astype(str).str.strip().str.lower()
+    s = _lower_text(x)
     out = pd.Series("unspecified", index=s.index, dtype=object)
     out = out.mask(s.str.startswith("f"), "female")
     out = out.mask(s.str.startswith("m"), "male")
@@ -511,7 +517,7 @@ def _clinical_ethnicity_2enums(x: Optional[pd.Series]) -> pd.Series:
     # clinical.yaml allows only {hispanic or latino, not hispanic or latino}
     if x is None:
         return pd.Series(["not hispanic or latino"] * 0, dtype=object)
-    s = x.astype(str).str.strip().str.lower()
+    s = _lower_text(x)
     out = pd.Series("not hispanic or latino", index=s.index, dtype=object)
     out = out.mask(s.str.contains(r"\bhispanic\b"), "hispanic or latino")
     return out
