@@ -46,10 +46,11 @@ predicate (`skos:exactMatch`, `skos:broadMatch`, …), justification and confide
   (`data/metadata/search_report/`) without changing the cohort files; tests:
   `pytest tests/test_ontology_search.py`.
 
-- From the data model to the modeling cohort: after `ontology_report.py` and `data_process`,
+- Grade checks: after `ontology_report.py`,
   `python scripts/label_concordance.py Glioma --study pedcbio:pbta_all --compare cbio:brain_cptac_2020`
-  counts each step (concept, cohort, concept-derived `tumor_grade`, modeling cohort, label class) and
-  compares the concept-derived grade with the training label and across studies
+  counts each step (concept, cohort, concept-derived `tumor_grade`) and compares the concept grade
+  with the grade implied by the coarser `CANCER_TYPE` field, with the other study for shared
+  patients, and, when its labels are available, with the training label
   (`data/metadata/label_concordance/`); tests: `pytest tests/test_label_concordance.py`.
 
 ## Adding a cancer type

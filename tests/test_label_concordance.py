@@ -71,8 +71,7 @@ def test_grade_of_class_from_map_and_override():
     assert (agree, n) == (3, 4) and round(kappa, 3) == 0.5
 
 
-def test_labels_rebuilt_from_extract_when_process_outputs_are_missing(tmp_path, monkeypatch):
-    """No labels_train.csv: the labels are rebuilt from the extract, as data_process would build them."""
+def _extract(tmp_path, label_map):
     import numpy as np
     pts = [f"P{i}" for i in range(12)]
     detailed = (["Low-grade glioma, KIAA1549-BRAF"] * 6 + ["High-grade glioma, IDH-mutant"] * 3
@@ -98,16 +97,25 @@ def test_labels_rebuilt_from_extract_when_process_outputs_are_missing(tmp_path, 
     OntologyLayer(ROOT / "config/ontology", ROOT / "src/gdcdictionary/schemas").annotate_cases(
         pd.read_csv(raw / "clinical_patients.csv"), smp).to_csv(
         rep / "Glioma__pedcbio__pbta_all_concept_annotations.tsv", sep="\t", index=False)
-    cfg = {"processor": {"labels": {"Glioma": {"source": "samples", "column": "CANCER_TYPE",
-                                               "map": "Low-grade glioma=0,High-grade glioma=1"}}},
+    cfg = {"processor": {"labels": {"Glioma": {"source": "samples", "column": "CANCER_TYPE", "map": label_map}}},
            "expression_profiles": {"Glioma": ["mrna", "linear_cna"]}}
     (tmp_path / "cfg.yaml").write_text(yaml.safe_dump(cfg))
+
+
+def _run(tmp_path, monkeypatch, *extra):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["label_concordance.py", "Glioma", "--study", "pedcbio:pbta_all",
-                                      "--config", "cfg.yaml", "--group", "glioma"])
+                                      "--config", "cfg.yaml", "--group", "glioma", *extra])
     lc.main()
     out = tmp_path / "data/metadata/label_concordance/Glioma__pedcbio__pbta_all"
     flow = pd.read_csv(out / "flow.tsv", sep="\t").assign(step=lambda d: d.step.str.strip()).set_index("step").n
+    return out, flow
+
+
+def test_labels_rebuilt_from_extract_when_process_outputs_are_missing(tmp_path, monkeypatch):
+    """No labels_train.csv: the labels are rebuilt from the extract, as data_process would build them."""
+    _extract(tmp_path, "Low-grade glioma=0,High-grade glioma=1")
+    out, flow = _run(tmp_path, monkeypatch)
     assert flow["modeling cohort (labels_train + labels_test)"] == 10
     assert flow["label 0 (Low Grade)"] == 7 and flow["label 1 (High Grade)"] == 3
     assert flow["test"] == 2
@@ -115,3 +123,14 @@ def test_labels_rebuilt_from_extract_when_process_outputs_are_missing(tmp_path, 
     md = (out / "summary.md").read_text()
     assert "rebuilt from the current extract" in md and "Ganglioglioma (1)" in md and "<missing> (1)" in md
     assert not (tmp_path / "data/gdm").exists()                      # read-only
+
+
+def test_data_model_checks_run_when_labels_cannot_be_built(tmp_path, monkeypatch):
+    """Map that matches no value: the modeling cohort is skipped, the data-model checks still run."""
+    _extract(tmp_path, "low-grade=0,high-grade=1")
+    out, flow = _run(tmp_path, monkeypatch)
+    assert "modeling cohort (labels_train + labels_test)" not in flow.index
+    # CANCER_TYPE_DETAILED concept vs CANCER_TYPE: P0-P8 imply a grade in both and agree
+    assert flow["CANCER_TYPE: grade implied for both (concept from another field)"] == 9
+    assert flow["CANCER_TYPE: grade agrees"] == 9
+    assert "Skipped: the labels could not be built" in (out / "summary.md").read_text()

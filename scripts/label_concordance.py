@@ -1,41 +1,35 @@
 """
-label_concordance.py - From the data model to the modeling cohort: how the harmonized NCIt concept
-of each case relates to the classification label used for training.
+label_concordance.py - Glioma grade from the data model to the modeling cohort.
 
-For one cancer type and study it follows every case from the data-model step to the modeling
-cohort, and compares the grade implied by the case's NCIt concept (GDC diagnosis.tumor_grade,
-derived through concept_relations.tsv: is_a + has_grade) with the label that data_process read
-from the source column (processor.labels.<type>.column / map in pipeline_config.yaml):
+The data model records, for every case, the grade implied by its NCIt concept (GDC
+diagnosis.tumor_grade, derived through concept_relations.tsv: is_a + has_grade). This script
+checks that grade at three levels:
 
-    cases in the study -> resolved to an NCIt concept -> in the cohort concept set
-      -> concept-derived tumor_grade (Low Grade / High Grade / not determined)
-      -> modeling cohort (labels_train.csv + labels_test.csv) -> label classes
-
-With --compare, it also compares the concept-derived grade of the patients that two studies share
-(e.g. pbta_all and brain_cptac_2020).
+  1. data model (always): cases -> resolved to an NCIt concept -> in the cohort concept set ->
+     tumor_grade Low / High / not implied; and agreement with the grade implied by a second,
+     coarser source field of the same case (--source-column, default the label column, e.g.
+     CANCER_TYPE), resolved through the same ontology. Cases whose concept came from that field
+     are left out of the agreement.
+  2. modeling cohort (when its labels are available): agreement of the concept grade with the
+     training label (labels_train.csv + labels_test.csv, or rebuilt read-only from the extract).
+  3. --compare: agreement of the concept grade between two studies for the patients they share.
 
 Inputs (run after scripts/ontology_report.py):
     data/metadata/ontology_report/<Type>__<portal>__<study>_concept_annotations.tsv
-    labels of the modeling cohort, from either
-      data/gdm/filtered/<portal>/<type>/<study>/labels_train.csv, labels_test.csv   (written by data_process), or
-      the current extract, rebuilt read-only with processor.load_and_prepare (same label map, omics
-      alignment and train/test split as data_process; nothing is written under data/gdm)
-    data/fetch/cbioportal_api_request/<portal>/<type>/<study>/clinical_samples.csv   (source label values)
+    data/fetch/cbioportal_api_request/<portal>/<type>/<study>/clinical_samples.csv
+    labels (optional): data/gdm/filtered/<portal>/<type>/<study>/labels_*.csv, --labels-dir, or rebuilt
+      read-only with processor.load_and_prepare (same label map, omics alignment and split as
+      data_process). If none can be built, levels 1 and 3 are still reported.
 
 Outputs (data/metadata/label_concordance/<Type>__<portal>__<study>/):
-    flow.tsv          counts at each step (the numbers for a flow diagram)
-    crosstab.tsv      concept-derived grade x label class, for the modeling cohort
-    patients.tsv      one row per case: concept, predicate, grade, in cohort?, label, split
-    shared.tsv        with --compare: grade in each study for the shared patients
-    summary.md        all of the above, with agreement and Cohen's kappa
+    flow.tsv, source_field.tsv (level 1), crosstab.tsv (level 2), shared.tsv (level 3),
+    patients.tsv (one row per case) and summary.md (all levels, with agreement and Cohen's kappa)
 
     python scripts/label_concordance.py Glioma --study pedcbio:pbta_all --compare cbio:brain_cptac_2020
-    python scripts/label_concordance.py Glioma --study pedcbio:pbta_all --grade-of-class "0=Low Grade,1=High Grade"
-    python scripts/label_concordance.py Glioma --study pedcbio:pbta_all --labels-dir path/to/old/run/pbta_all
+    python scripts/label_concordance.py Glioma --study pedcbio:pbta_all --labels none
+    python scripts/label_concordance.py Glioma --study pedcbio:pbta_all --labels-dir path/to/modeled/run/pbta_all
 
---labels auto (default) uses labels_train/test.csv when they exist and otherwise rebuilds the labels
-from the extract; --labels files / --labels extract forces one source.
-
+--labels auto (default): labels_train/test.csv if present, else rebuilt from the extract, else skipped.
 Read-only for the pipeline.
 """
 import argparse
@@ -147,22 +141,55 @@ def concept_status(a: pd.DataFrame, cohort: set) -> pd.Series:
     return st
 
 
+def source_field_grades(onto, sfile: Path, column: str) -> pd.Series:
+    """Per patient: the grade implied by `column` (resolved through the ontology), 'conflicting' if
+    its samples imply different grades, or NOT_DETERMINED."""
+    smp = pd.read_csv(sfile, dtype=str)
+    pid = next((c for c in ("patientId", "PATIENT_ID", "subject_id") if c in smp.columns), None)
+    if pid is None or column not in smp.columns:
+        return pd.Series(dtype=str)
+    cache: Dict[str, str] = {}
+
+    def grade(v: str) -> str:
+        if v not in cache:
+            r = onto.resolve("TEXT", v)
+            g = onto.related(r.concept_id, "has_grade") if r.ok else None
+            cache[v] = (onto.gdc_value(g[0], "diagnosis", "tumor_grade") if g else None) or NOT_DETERMINED
+        return cache[v]
+
+    def per_patient(vals: pd.Series) -> str:
+        gs = {grade(v) for v in vals.dropna().astype(str).str.strip() if v} - {NOT_DETERMINED}
+        return gs.pop() if len(gs) == 1 else ("conflicting" if gs else NOT_DETERMINED)
+
+    out = smp.groupby(pid)[column].agg(per_patient)
+    out.index = out.index.astype(str)
+    return out
+
+
+def md_table(xt: pd.DataFrame, corner: str) -> list:
+    return ([f"| {corner} | " + " | ".join(map(str, xt.columns)) + " |", "| --- |" + " ---: |" * len(xt.columns)]
+            + [f"| {i} | " + " | ".join(str(v) for v in r) + " |" for i, r in xt.iterrows()])
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("cancer_type")
-    ap.add_argument("--study", required=True, help="portal:study_id of the modeling cohort, e.g. pedcbio:pbta_all")
+    ap.add_argument("--study", required=True, help="portal:study_id, e.g. pedcbio:pbta_all")
     ap.add_argument("--compare", help="portal:study_id of a second study sharing patients")
     ap.add_argument("--group", help="cohort in analysis_groups.tsv (default: search.cohorts in the config)")
+    ap.add_argument("--source-column", help="coarser source field to compare with the concept grade "
+                                            "(default: processor.labels.<type>.column, else CANCER_TYPE)")
     ap.add_argument("--grade-of-class", help='e.g. "0=Low Grade,1=High Grade" (default: from the label map)')
     ap.add_argument("--config", default="config/pipeline_config.yaml")
     ap.add_argument("--report-dir", default="data/metadata/ontology_report")
-    ap.add_argument("--labels", choices=("auto", "files", "extract"), default="auto",
+    ap.add_argument("--labels", choices=("auto", "files", "extract", "none"), default="auto",
                     help="where the modeling-cohort labels come from (see above)")
     ap.add_argument("--labels-dir", help="folder with labels_train.csv / labels_test.csv "
                                          "(default data/gdm/filtered/<portal>/<type>/<study>)")
     ap.add_argument("--out", default="data/metadata/label_concordance")
     args = ap.parse_args()
 
+    from src.ontology import OntologyLayer
     cfg = yaml.safe_load(open(args.config)) or {}
     labels_cfg = ((cfg.get("processor") or {}).get("labels") or {})
     ct = next((k for k in labels_cfg if slug(k) == slug(args.cancer_type)), args.cancer_type)
@@ -173,95 +200,109 @@ def main() -> None:
     if not cohort:
         raise SystemExit(f"no concepts for group {group!r} in config/ontology/analysis_groups.tsv")
     portal, study = args.study.split(":", 1)
-    g_of = grade_of_class(lc.get("map"), args.grade_of_class)
+    study_dir = Path("data/fetch/cbioportal_api_request") / portal / slug(ct) / study
+    out = Path(args.out) / f"{ct.replace(' ', '_')}__{portal}__{study}"
+    out.mkdir(parents=True, exist_ok=True)
 
     a = load_annotations(Path(args.report_dir), ct, portal, study)
     a["status"] = concept_status(a, cohort)
     a["concept_grade"] = a.gdc_tumor_grade.where(a.gdc_tumor_grade.isin(GRADES), NOT_DETERMINED)
-
-    # modeling cohort
-    mdir = Path(args.labels_dir) if args.labels_dir else Path("data/gdm/filtered") / portal / slug(ct) / study
-    have_files = all((mdir / f"labels_{sp}.csv").exists() for sp in ("train", "test"))
-    if args.labels == "files" and not have_files:
-        raise SystemExit(f"{mdir}/labels_train.csv or labels_test.csv not found")
-    if have_files and args.labels != "extract":
-        y = labels_from_files(mdir)
-        label_source = f"{mdir}/labels_train.csv + labels_test.csv"
-    else:
-        print(f"[labels] rebuilding the modeling-cohort labels from the extract (read-only), as data_process would")
-        y = labels_from_extract(cfg, ct, portal, study, lc)
-        label_source = ("rebuilt from the current extract with processor.load_and_prepare "
-                        "(same label map, omics alignment and split as data_process)")
-        if LEFT_OUT:
-            label_source += ("; samples with a label value outside the map were left out: "
-                             + ", ".join(f"{k} ({v})" for k, v in LEFT_OUT.items()))
-    y["label_grade"] = y.label.map(g_of)
-
-    # source label values (display only)
-    col = lc.get("column")
-    sfile = Path("data/fetch/cbioportal_api_request") / portal / slug(ct) / study / "clinical_samples.csv"
-    if col and sfile.exists():
-        smp = pd.read_csv(sfile, dtype=str)
-        pid = next((c for c in ("patientId", "PATIENT_ID", "subject_id") if c in smp.columns), None)
-        if pid and col in smp.columns:
-            raw = smp.groupby(pid)[col].agg(lambda v: " | ".join(sorted(set(v.dropna()))))
-            y[f"source_{col}"] = raw.reindex(y.index).values
-
-    pts = a[["disease_concept_id", "disease_concept_label", "disease_predicate", "disease_source_value",
-             "status", "concept_grade"]].join(y, how="outer")
-    pts["in_modeling_cohort"] = pts.label.notna()
-    pts.loc[pts.status.isna(), "status"] = "not in the clinical extract"
-    pts.index.name = "patient_id"
-
-    m = pts[pts.in_modeling_cohort]
-    det = m[m.concept_grade.isin(GRADES)]
-    agree, n_det, kappa = cohen_kappa(det.concept_grade, det.label_grade)
-
+    in_set = a.status == "in cohort"
     flow = [
         ("cases in the clinical extract", len(a)),
         ("  resolved to an NCIt concept", int(a.disease_concept_id.notna().sum())),
-        ("    in the cohort concept set", int((a.status == "in cohort").sum())),
-        ("      tumor_grade Low Grade (from concept)", int(((a.status == "in cohort") & (a.concept_grade == "Low Grade")).sum())),
-        ("      tumor_grade High Grade (from concept)", int(((a.status == "in cohort") & (a.concept_grade == "High Grade")).sum())),
-        (f"      {NOT_DETERMINED}", int(((a.status == "in cohort") & (a.concept_grade == NOT_DETERMINED)).sum())),
+        ("    in the cohort concept set", int(in_set.sum())),
+        ("      tumor_grade Low Grade (from concept)", int((in_set & (a.concept_grade == "Low Grade")).sum())),
+        ("      tumor_grade High Grade (from concept)", int((in_set & (a.concept_grade == "High Grade")).sum())),
+        (f"      {NOT_DETERMINED}", int((in_set & (a.concept_grade == NOT_DETERMINED)).sum())),
         ("    outside the cohort concept set", int((a.status == "outside cohort").sum())),
         ("  unresolved (review queue)", int((a.status == "unresolved").sum())),
-        ("modeling cohort (labels_train + labels_test)", len(m)),
     ]
-    for cls in sorted(g_of):
-        flow.append((f"  label {cls} ({g_of[cls]})", int((m.label == cls).sum())))
-    for sp in ("train", "test"):
-        flow.append((f"  {sp}", int((m.split == sp).sum())))
-    for st in ("outside cohort", "unresolved", "not in the clinical extract"):
-        flow.append((f"  modeling cohort: {st}", int((m.status == st).sum())))
-    flow.append(("  concept grade determined", n_det))
-    flow.append(("  concept grade agrees with label", agree))
-    flow = pd.DataFrame(flow, columns=["step", "n"])
+    md = [f"# {ct}: grade from the data model to the modeling cohort ({portal}:{study})", "",
+          f"Cohort concept set: `{group}` ({len(cohort)} NCIt concepts).", ""]
 
-    xt = pd.crosstab(m.concept_grade.where(m.status == "in cohort", m.status), m.label_grade,
-                     margins=True, margins_name="total")
+    # ---- level 1: concept grade vs the grade implied by a coarser source field
+    scol = args.source_column or lc.get("column") or "CANCER_TYPE"
+    sfile = study_dir / "clinical_samples.csv"
+    a["source_field_grade"] = NOT_DETERMINED
+    if sfile.exists():
+        onto = OntologyLayer(ROOT / "config/ontology", ROOT / "src/gdcdictionary/schemas")
+        sg = source_field_grades(onto, sfile, scol)
+        a["source_field_grade"] = sg.reindex(a.index).fillna(NOT_DETERMINED)
+        own = a.disease_source.fillna("").str.endswith(f".{scol}")       # concept came from that field
+        cmp1 = a[~own & a.concept_grade.isin(GRADES) & a.source_field_grade.isin(GRADES)]
+        ag1, n1, k1 = cohen_kappa(cmp1.concept_grade, cmp1.source_field_grade)
+        xt1 = pd.crosstab(a.loc[~own, "concept_grade"], a.loc[~own, "source_field_grade"])
+        xt1.to_csv(out / "source_field.tsv", sep="\t")
+        flow += [(f"{scol}: grade implied for both (concept from another field)", n1),
+                 (f"{scol}: grade agrees", ag1),
+                 (f"{scol}: concept taken from {scol} itself (not compared)", int(own.sum()))]
+        md += [f"## Concept grade vs. the grade implied by {scol}", "",
+               f"The concept comes from the most specific field that resolves (e.g. CANCER_TYPE_DETAILED); "
+               f"{scol} is resolved through the same mappings. Where both imply a grade, they agree in "
+               f"{ag1} of {n1} cases ({(ag1 / n1 if n1 else float('nan')):.1%}; Cohen's kappa {k1:.3f}). "
+               f"{int(own.sum())} cases whose concept came from {scol} itself are not compared.", ""]
+        md += md_table(xt1, f"concept grade \\ {scol}") + [""]
+    else:
+        md += [f"({sfile} not found: source-field comparison skipped)", ""]
 
-    out = Path(args.out) / f"{ct.replace(' ', '_')}__{portal}__{study}"
-    out.mkdir(parents=True, exist_ok=True)
-    flow.to_csv(out / "flow.tsv", sep="\t", index=False)
-    xt.to_csv(out / "crosstab.tsv", sep="\t")
-    pts.sort_values(["in_modeling_cohort", "status", "concept_grade"], ascending=[False, True, True]) \
-       .to_csv(out / "patients.tsv", sep="\t")
+    # ---- level 2: modeling cohort (optional)
+    y, label_source = None, None
+    if args.labels != "none":
+        mdir = Path(args.labels_dir) if args.labels_dir else Path("data/gdm/filtered") / portal / slug(ct) / study
+        have_files = all((mdir / f"labels_{sp}.csv").exists() for sp in ("train", "test"))
+        if args.labels == "files" and not have_files:
+            raise SystemExit(f"{mdir}/labels_train.csv or labels_test.csv not found")
+        if have_files and args.labels != "extract":
+            y, label_source = labels_from_files(mdir), f"{mdir}/labels_train.csv + labels_test.csv"
+        else:
+            print("[labels] rebuilding the modeling-cohort labels from the extract (read-only), as data_process would")
+            try:
+                y = labels_from_extract(cfg, ct, portal, study, lc)
+                label_source = ("rebuilt from the current extract with processor.load_and_prepare "
+                                "(same label map, omics alignment and split as data_process)")
+                if LEFT_OUT:
+                    label_source += ("; samples with a label value outside the map were left out: "
+                                     + ", ".join(f"{k} ({v})" for k, v in LEFT_OUT.items()))
+            except SystemExit as e:
+                if args.labels == "extract":
+                    raise
+                print(f"[labels] {e}\n[labels] modeling-cohort comparison skipped; data-model checks still reported")
+                md += ["## Modeling cohort", "", "Skipped: the labels could not be built from the current extract "
+                       "and config. Pass --labels-dir with labels_train.csv / labels_test.csv of the modeled run.", ""]
 
-    md = [f"# {ct}: data model to modeling cohort ({portal}:{study})", "",
-          f"Cohort concept set: `{group}` ({len(cohort)} NCIt concepts). Label column: "
-          f"`{lc.get('source', 'samples')}.{col}`, map `{lc.get('map')}` "
-          f"({', '.join(f'{k} = {v}' for k, v in sorted(g_of.items()))}).", "",
-          f"Modeling-cohort labels: {label_source}.", "",
-          "## Flow", "", "| Step | n |", "| --- | ---: |"]
-    md += [f"| {s.replace('  ', '&nbsp;&nbsp;')} | {n} |" for s, n in flow.itertuples(index=False)]
-    md += ["", "## Concept-derived grade x label (modeling cohort)", "",
-           "| concept grade \\ label | " + " | ".join(map(str, xt.columns)) + " |",
-           "| --- |" + " ---: |" * len(xt.columns)]
-    md += [f"| {i} | " + " | ".join(str(v) for v in r) + " |" for i, r in xt.iterrows()]
-    md += ["", f"Agreement where the concept implies a grade: {agree} of {n_det} "
-               f"({(agree / n_det if n_det else float('nan')):.1%}), Cohen's kappa {kappa:.3f}."]
+    pts = a[["disease_concept_id", "disease_concept_label", "disease_predicate", "disease_source",
+             "disease_source_value", "status", "concept_grade", "source_field_grade"]]
+    if y is not None:
+        g_of = grade_of_class(lc.get("map"), args.grade_of_class)
+        y["label_grade"] = y.label.map(g_of)
+        pts = pts.join(y, how="outer")
+        pts["in_modeling_cohort"] = pts.label.notna()
+        pts.loc[pts.status.isna(), "status"] = "not in the clinical extract"
+        m = pts[pts.in_modeling_cohort]
+        det = m[m.concept_grade.isin(GRADES)]
+        agree, n_det, kappa = cohen_kappa(det.concept_grade, det.label_grade)
+        flow.append(("modeling cohort (labels_train + labels_test)", len(m)))
+        for cls in sorted(g_of):
+            flow.append((f"  label {cls} ({g_of[cls]})", int((m.label == cls).sum())))
+        for sp in ("train", "test"):
+            flow.append((f"  {sp}", int((m.split == sp).sum())))
+        for st in ("outside cohort", "unresolved", "not in the clinical extract"):
+            flow.append((f"  modeling cohort: {st}", int((m.status == st).sum())))
+        flow += [("  concept grade determined", n_det), ("  concept grade agrees with label", agree)]
+        xt = pd.crosstab(m.concept_grade.where(m.status == "in cohort", m.status), m.label_grade,
+                         margins=True, margins_name="total")
+        xt.to_csv(out / "crosstab.tsv", sep="\t")
+        md += ["## Concept grade vs. training label (modeling cohort)", "",
+               f"Labels: {label_source}. Map `{lc.get('map')}` "
+               f"({', '.join(f'{k} = {v}' for k, v in sorted(g_of.items()))}).", ""]
+        md += md_table(xt, "concept grade \\ label")
+        md += ["", f"Agreement where the concept implies a grade: {agree} of {n_det} "
+                   f"({(agree / n_det if n_det else float('nan')):.1%}), Cohen's kappa {kappa:.3f}.", ""]
+    pts.index.name = "patient_id"
+    pts.to_csv(out / "patients.tsv", sep="\t")
 
+    # ---- level 3: patients in two studies
     if args.compare:
         p2, s2 = args.compare.split(":", 1)
         b = load_annotations(Path(args.report_dir), ct, p2, s2)
@@ -275,14 +316,16 @@ def main() -> None:
         sh.to_csv(out / "shared.tsv", sep="\t")
         both = sh[sh[f"{study}_grade"].isin(GRADES) & sh[f"{s2}_grade"].isin(GRADES)]
         ag2, n2, k2 = cohen_kappa(both[f"{study}_grade"], both[f"{s2}_grade"])
-        xt2 = pd.crosstab(sh[f"{study}_grade"], sh[f"{s2}_grade"])
-        md += ["", f"## Patients in both {study} and {s2}", "",
-               f"{len(shared)} shared patients; concept-derived grade agrees in {ag2} of {n2} with a grade "
-               f"in both studies (Cohen's kappa {k2:.3f}).", "",
-               f"| {study} \\ {s2} | " + " | ".join(map(str, xt2.columns)) + " |",
-               "| --- |" + " ---: |" * len(xt2.columns)]
-        md += [f"| {i} | " + " | ".join(str(v) for v in r) + " |" for i, r in xt2.iterrows()]
+        flow += [(f"shared with {s2}", len(shared)), (f"  grade in both studies", n2), ("  grade agrees", ag2)]
+        md += [f"## Patients in both {study} and {s2}", "",
+               f"{len(shared)} shared patients; the concept grade agrees in {ag2} of {n2} with a grade "
+               f"in both studies (Cohen's kappa {k2:.3f}).", ""]
+        md += md_table(pd.crosstab(sh[f"{study}_grade"], sh[f"{s2}_grade"]), f"{study} \\ {s2}") + [""]
 
+    flow = pd.DataFrame(flow, columns=["step", "n"])
+    flow.to_csv(out / "flow.tsv", sep="\t", index=False)
+    md[4:4] = ["## Flow", "", "| Step | n |", "| --- | ---: |"] + \
+              [f"| {s.replace('  ', '&nbsp;&nbsp;')} | {n} |" for s, n in flow.itertuples(index=False)] + [""]
     (out / "summary.md").write_text("\n".join(md) + "\n")
     print("\n".join(md))
     print(f"\nwrote {out}/")
