@@ -399,7 +399,8 @@ def _derive_sex_at_birth(patients_df: pd.DataFrame) -> pd.Series:
     out = pd.Series("unknown", index=s.index, dtype=object)
     out = out.mask(s.str.startswith("f"), "female")
     out = out.mask(s.str.startswith("m"), "male")
-    out = out.mask(s.str.contains("not reported"), "not reported")
+    # GDC demographic.sex_at_birth permits only female / male / unknown (no "not reported")
+    out = out.mask(s.str.contains("not reported"), "unknown")
     out = out.mask(s.str.contains("unknown"), "unknown")
     return out.fillna("unknown")
 

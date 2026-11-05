@@ -17,3 +17,17 @@ def test_missing_values_do_not_break_the_normalizers():
     sex = pd.Series(["Female", np.nan, "Male"], dtype=object)
     assert dm._clinical_gender_from_sex(sex).tolist() == ["female", "unspecified", "male"]
     assert dm._derive_sex_at_birth(pd.DataFrame({"SEX": sex})).tolist() == ["female", "unknown", "male"]
+
+
+def test_demographic_values_are_gdc_permissible():
+    import yaml
+    enum = yaml.safe_load(open("src/gdcdictionary/schemas/demographic.yaml"))["properties"]
+    p = pd.DataFrame({"patientId": ["P1", "P2", "P3", "P4"],
+                      "SEX": ["Female", "Not Reported", np.nan, "Unknown"],
+                      "RACE": ["White", "Not Reported", np.nan, "Other"],
+                      "ETHNICITY": ["Not Hispanic or Latino", "Not reported", np.nan, "Unknown"],
+                      "OS_STATUS": ["0:LIVING", "1:DECEASED", np.nan, "0:LIVING"]})
+    d = dm.cbio_to_demographic(p)
+    assert d.sex_at_birth.tolist() == ["female", "unknown", "unknown", "unknown"]   # "not reported" is not allowed
+    for col in ("sex_at_birth", "vital_status", "ethnicity", "race"):
+        assert set(d[col]) <= set(enum[col]["enum"]), col
