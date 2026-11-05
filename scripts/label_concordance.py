@@ -62,7 +62,7 @@ def cohen_kappa(a: pd.Series, b: pd.Series) -> Tuple[int, int, float]:
     return agree, n, kappa
 
 
-def grade_of_class(label_map: Optional[str], override: Optional[str]) -> Dict[int, str]:
+def grade_of_class(label_map, override: Optional[str]) -> Dict[int, str]:
     """{0: "Low Grade", 1: "High Grade"} from --grade-of-class, else from the label-map keys."""
     if override:
         out = {}
@@ -71,11 +71,10 @@ def grade_of_class(label_map: Optional[str], override: Optional[str]) -> Dict[in
             out[int(k.strip())] = v.strip()
         return out
     out: Dict[int, str] = {}
-    for tok in str(label_map or "").split(","):
-        if "=" not in tok:
-            continue
-        k, v = tok.rsplit("=", 1)
-        k = k.lower()
+    pairs = (list(label_map.items()) if isinstance(label_map, dict)
+             else [tuple(t.rsplit("=", 1)) for t in str(label_map or "").split(",") if "=" in t])
+    for k, v in pairs:
+        k = str(k).lower()
         g = "Low Grade" if "low" in k else "High Grade" if "high" in k else None
         if g:
             if out.get(int(v), g) != g:

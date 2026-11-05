@@ -28,3 +28,12 @@ def test_no_value_in_the_map_is_an_error_even_when_dropping():
     with pytest.raises(ValueError, match="No CANCER_TYPE value matches"):
         _build_binary_labels_general(**{**KW, "label_map_override": {"Low-grade glioma": 0, "High-grade glioma": 1}},
                                      drop_unmapped=True)
+
+
+def test_label_map_as_yaml_mapping_with_commas():
+    from src.processor import _parse_label_map_str
+    m = _parse_label_map_str({"Low-Grade Glioma, NOS or NEC": 0, "High-Grade Glioma, NOS or NEC": "1"})
+    assert m == {"Low-Grade Glioma, NOS or NEC": 0, "High-Grade Glioma, NOS or NEC": 1}
+    assert _parse_label_map_str("FHWT=0,DAWT=1") == {"FHWT": 0, "DAWT": 1}
+    with pytest.raises(ValueError):
+        _parse_label_map_str({"x": 2})

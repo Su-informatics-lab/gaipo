@@ -204,8 +204,14 @@ processor:
     Glioma:
       source: samples
       column: CANCER_TYPE
-      map: "<low-grade value>=0,<high-grade value>=1"
+      map:                     # mapping form: needed when a value contains a comma
+        "Low-grade glioma/astrocytoma (WHO grade I/II)": 0
+        "High-grade glioma/astrocytoma (WHO grade III/IV)": 1
+      drop_unmapped: true      # leave out samples whose value is not in the map
 ```
+
+`map` is either a string (`"FHWT=0,DAWT=1"`) or a YAML mapping as above; use the mapping when a value
+contains a comma (e.g. "Low-Grade Glioma, NOS or NEC"). Several values can map to the same class.
 
 The labels apply to every study of a cancer type. If two studies of one type use different values (as PBTA and CPTAC do), process one study at a time by commenting out the other study ID in step 3. To model only the classes in the map (e.g. low- vs high-grade glioma when the extract also holds other tumor types or blank values), add `drop_unmapped: true` under the cancer type: samples whose value is missing or not in the map are then left out, and the processor prints how many per value.
 

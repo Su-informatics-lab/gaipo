@@ -233,10 +233,21 @@ def _collapse_mirna_rows(df_raw: pd.DataFrame) -> pd.DataFrame:
     out.index.name = "hugoGeneSymbol_base"
     return out
 
-def _parse_label_map_str(label_map_str: Optional[str]) -> Optional[Dict[str, int]]:
+def _parse_label_map_str(label_map_str) -> Optional[Dict[str, int]]:
+    """
+    Label map from the config: either a string "FHWT=0,DAWT=1" or a YAML mapping
+    {"Low-Grade Glioma, NOS or NEC": 0, ...}. Use the mapping form when a label value contains
+    a comma, which the string form cannot hold.
+    """
     if not label_map_str:
         return None
     mp: Dict[str, int] = {}
+    if isinstance(label_map_str, dict):
+        for k, v in label_map_str.items():
+            if str(v).strip() not in {"0", "1"}:
+                raise ValueError(f"Label map values must be 0 or 1; got {k!r}: {v!r}.")
+            mp[str(k).strip()] = int(str(v).strip())
+        return mp or None
     for tok in str(label_map_str).split(","):
         if "=" not in tok:
             continue
