@@ -174,6 +174,19 @@ pedcBio_studyId:
   "Glioma": "pbta_all"
 ```
 
+To model one study per cancer type (wt_target_2018_pub for Wilms tumor, pbta_all for glioma), leave
+`"Glioma"` out of `cBio_studyId`.
+
+By default `data_extract` keeps the samples that CCDI lists for the matched patients and that the
+portal also has. CCDI can list only some of a patient's samples (in TARGET Wilms tumor, 126 of 657),
+which drops omics samples. To take every portal sample of the matched patients instead:
+
+```yaml
+extract:
+  samples:
+    "Wilms Tumor": patients   # default for every type: ccdi; a single value applies to all types
+```
+
 PedcBioPortal needs a data-access token. Set it in the shell (or in a git-ignored `.env` file next to `docker-compose.yml`) and leave `auth:` in the YAML as `null`:
 
 ```bash
@@ -186,6 +199,17 @@ export PEDCBIOPORTAL_API_TOKEN="<your token>"
 expression_profiles:
   "Wilms Tumor": [mrna, mirna, methylation]
   "Glioma": [mrna, linear_cna]
+```
+
+A study can have several files per modality (wt_target_2018_pub has microarray and RNA-seq mRNA).
+`data_process` takes the first match (for mRNA, RNA-seq z-scores first) and prints the file it used.
+To choose one, name it (or a glob) under the cancer type's `processor.labels` block:
+
+```yaml
+processor:
+  labels:
+    Wilms Tumor:
+      omics_files: {mrna: "wt_target_2018_pub_mrna.tsv"}   # microarray
 ```
 
 **5. Labels for `data_process`.** The map must cover every value of the label column in the extracted study (the processor stops otherwise), so look the values up after `data_extract`:

@@ -118,6 +118,15 @@ pedcBio_studyId = cfg.get("pedcBio_studyId", {})   # {"Glioma": "pbta_all", ...}
 expression_profiles = cfg.get("expression_profiles", {})  # {"Glioma": ["mrna","linear_cna"], "Wilms Tumor": ["mrna","methylation",...]}
 cancer_types = cfg["cancer_type_interest"]
 TIMEOUT  = cfg.get("timeout", 60)
+# which samples to extract: "ccdi" (default) = samples listed by CCDI that the portal also has;
+# "patients" = every portal sample of the matched patients. One value for all cancer types, or a
+# mapping per cancer type, e.g. {"Wilms Tumor": patients}
+_SAMPLE_SCOPE = (cfg.get("extract") or {}).get("samples", "ccdi")
+
+
+def sample_scope(ct: str) -> str:
+    v = _SAMPLE_SCOPE.get(ct, "ccdi") if isinstance(_SAMPLE_SCOPE, dict) else _SAMPLE_SCOPE
+    return str(v or "ccdi").strip().lower()
 
 # optional auth tokens (env overrides)
 # Tokens: environment variables first, so no token needs to live in config files under git
@@ -618,9 +627,14 @@ def data_extract():
                 sample_ids_from_ok = []
 
             # Final selection:
-            #  - If CSV had usable sample ids, intersect with API-derived samples (if available).
-            #  - Otherwise, just use API-derived samples.
-            if sample_ids_csv is not None:
+            #  - extract.samples: patients -> every portal sample of the matched patients
+            #    (CCDI may list only some samples of a patient, e.g. TARGET Wilms tumor)
+            #  - otherwise (default "ccdi"): CSV sample ids that the portal also has, else API-derived samples.
+            if sample_scope(ct) == "patients" and sample_ids_from_ok:
+                sample_ids = sample_ids_from_ok
+                print(f"[{ct} / {portal}:{study_id}] extract.samples = patients: every portal sample of the "
+                      f"matched patients ({len(sample_ids)})")
+            elif sample_ids_csv is not None:
                 sample_ids = sorted(set(sample_ids_csv).intersection(sample_ids_from_ok) if sample_ids_from_ok else set(sample_ids_csv))
             else:
                 sample_ids = sample_ids_from_ok

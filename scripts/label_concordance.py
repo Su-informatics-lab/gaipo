@@ -111,7 +111,8 @@ def labels_from_extract(cfg: dict, ct: str, portal: str, study: str, lc: dict) -
                                modalities=mods, label_source=lc.get("source", "samples"),
                                label_column=lc.get("column"), test_size=float(lc.get("test_size", 0.2)),
                                random_state=int(lc.get("seed", 42)), label_map=lc.get("map"),
-                               select_features=False, drop_unmapped=True)
+                               select_features=False, drop_unmapped=True,
+                               omics_files=lc.get("omics_files") or None)
     except ValueError as e:
         raise SystemExit(f"could not build the labels as data_process would: {e}\n"
                          f"Fix processor.labels.{ct} in the config (README, 'Labels for process'), "

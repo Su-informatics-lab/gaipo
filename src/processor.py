@@ -419,7 +419,7 @@ def _build_clinical_filtered(clin_pat: pd.DataFrame,
 # Main orchestration
 # ==========================
 
-def _find_omics_file(rawData_dir: Path, mod: str) -> Path:
+def _find_omics_file(rawData_dir: Path, mod: str, override: Optional[str] = None) -> Path:
     """
     Find a TSV written by extractor for the requested modality.
     We accept common patterns per cBioPortal profile names (matched case-insensitively).
@@ -446,6 +446,11 @@ def _find_omics_file(rawData_dir: Path, mod: str) -> Path:
     }
     import fnmatch
     files = sorted(p for p in Path(rawData_dir).iterdir() if p.is_file())
+    if override:                       # processor.labels.<type>.omics_files.<mod>: file name or glob
+        hits = [p for p in files if fnmatch.fnmatch(p.name.lower(), str(override).lower())]
+        if not hits:
+            raise FileNotFoundError(f"omics_files.{mod} = {override!r} matches no file in {rawData_dir}")
+        return hits[0]
     for pat in patterns.get(mod, []):
         hits = [p for p in files if fnmatch.fnmatch(p.name.lower(), pat.lower())]
         if hits:
@@ -477,6 +482,7 @@ def load_and_prepare(
     select_features: bool = True,
     drop_unmapped: bool = False,
     fdr_fallback: bool = True,
+    omics_files: Optional[Dict[str, str]] = None,
 ):
     """select_features=False returns the aligned patient x feature matrices before feature
     selection and scaling (used by benchmark.py, which refits the selection inside each CV fold).
@@ -496,6 +502,13 @@ def load_and_prepare(
         ccdi["sampleId"] = ccdi["sampleId"].astype(str).str.strip()
         ccdi["patientId"] = ccdi["patientId"].astype(str).str.strip()
         mapping_series = ccdi.set_index("sampleId")["patientId"]
+        # samples fetched from the portal but not listed by CCDI (extract.samples: patients):
+        # take their patient from the portal's own sample table
+        if {"sampleId", "patientId"} <= set(clin_sam.columns):
+            portal = clin_sam[["sampleId", "patientId"]].dropna().astype(str)
+            portal = portal[~portal.sampleId.isin(mapping_series.index)].drop_duplicates("sampleId")
+            if not portal.empty:
+                mapping_series = pd.concat([mapping_series, portal.set_index("sampleId")["patientId"]])
 
     user_map = _parse_label_map_str(label_map)
     labels_enc, inv_map = _build_binary_labels_general(
@@ -511,7 +524,8 @@ def load_and_prepare(
 
     omics_dict: Dict[str, pd.DataFrame] = {}
     for mi, mod in enumerate(modalities):
-        f = _find_omics_file(rawData_dir, mod)
+        f = _find_omics_file(rawData_dir, mod, (omics_files or {}).get(mod))
+        print(f"[processor] {cancer_type} {mod}: {f.name}")
         df_raw = pd.read_csv(f, sep="\t")
 
         if mod == "mirna":
@@ -698,6 +712,7 @@ def data_process():
         seed = int(lc.get("seed", 42))
         fdr_fallback = bool(lc.get("fdr_fallback", True))
         drop_unmapped = bool(lc.get("drop_unmapped", False))
+        omics_files = lc.get("omics_files") or None
 
         for portal, study_id in studies:
             rawData_dir = fetch_root / portal / ct_slug / study_id
@@ -723,6 +738,7 @@ def data_process():
                 alpha=alpha,
                 fdr_fallback=fdr_fallback,
                 drop_unmapped=drop_unmapped,
+                omics_files=omics_files,
             )
 
             out_dir = Path("data/gdm/filtered") / portal / ct_slug / study_id

@@ -130,6 +130,7 @@ def _label_cfg(cfg: dict, ct: str) -> dict:
         "random_state": int(lc.get("seed", 42)),
         "fdr_fallback": bool(lc.get("fdr_fallback", True)),
         "drop_unmapped": bool(lc.get("drop_unmapped", False)),
+        "omics_files": lc.get("omics_files") or None,
     }
 
 
@@ -173,7 +174,7 @@ def load_cohort(cfg: dict, ct: str, portal: str, study_id: str, mods: List[str],
             modalities=mods, label_source=lc["label_source"], label_column=lc["label_column"],
             top_k=lc["top_k"], test_size=lc["test_size"], random_state=lc["random_state"],
             label_map=lc["label_map"], var_threshold=lc["var_threshold"], alpha=lc["alpha"],
-            select_features=False, drop_unmapped=lc["drop_unmapped"],
+            select_features=False, drop_unmapped=lc["drop_unmapped"], omics_files=lc["omics_files"],
         )
         _, _, y_tr, y_te, _, _, _, omics, clin, _, _ = out
         y = pd.concat([y_tr, y_te])

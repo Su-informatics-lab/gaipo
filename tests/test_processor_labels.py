@@ -37,3 +37,32 @@ def test_label_map_as_yaml_mapping_with_commas():
     assert _parse_label_map_str("FHWT=0,DAWT=1") == {"FHWT": 0, "DAWT": 1}
     with pytest.raises(ValueError):
         _parse_label_map_str({"x": 2})
+
+
+def test_omics_file_override_and_portal_sample_mapping(tmp_path):
+    """omics_files picks one of several files of a modality; samples the CCDI list lacks are mapped
+    to their patient through the portal's sample table."""
+    from src.processor import _find_omics_file, load_and_prepare
+    raw = tmp_path / "study"
+    raw.mkdir()
+    pts = [f"T-{i}" for i in range(10)]
+    smp = [f"{p}-01" for p in pts]
+    pd.DataFrame({"patientId": pts}).to_csv(raw / "clinical_patients.csv", index=False)
+    pd.DataFrame({"sampleId": smp, "patientId": pts, "Y": ["A"] * 6 + ["B"] * 4}).to_csv(
+        raw / "clinical_samples.csv", index=False)
+    rng = np.random.default_rng(0)
+    for name in ("s_rna_seq_mrna_median_all_sample_Zscores.tsv", "s_mrna.tsv", "s_mirna.tsv"):
+        m = pd.DataFrame(rng.normal(size=(4, 10)), columns=smp)
+        m.insert(0, "hugoGeneSymbol", [f"G{i}" for i in range(4)])
+        m.to_csv(raw / name, sep="\t", index=False)
+    assert _find_omics_file(raw, "mrna").name == "s_rna_seq_mrna_median_all_sample_Zscores.tsv"
+    assert _find_omics_file(raw, "mrna", "s_mrna.tsv").name == "s_mrna.tsv"
+    with pytest.raises(FileNotFoundError):
+        _find_omics_file(raw, "mrna", "nothing_*.tsv")
+    ccdi = tmp_path / "ccdi.csv"                       # CCDI lists only 6 of the 10 samples
+    pd.DataFrame({"sample_id": smp[:6], "subject_id": pts[:6]}).to_csv(ccdi, index=False)
+    out = load_and_prepare(rawData_dir=raw, ccdi_csv=ccdi, cancer_type="T", modalities=["mrna", "mirna"],
+                           label_source="samples", label_column="Y", label_map="A=0,B=1",
+                           select_features=False, omics_files={"mrna": "s_mrna.tsv"})
+    y = pd.concat([out[2], out[3]])
+    assert len(y) == 10                                # all 10 patients, not only the 6 CCDI lists
