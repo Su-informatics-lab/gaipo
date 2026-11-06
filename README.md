@@ -138,6 +138,7 @@ Every step reads one file, `config/pipeline_config.yaml` (or the file named by t
 | `default_type_terms`, `custom_type_terms` | `data_fetch` | Search strings sent to the CCDI Data Federation per cancer type (case-insensitive substring match on the diagnosis). Put new cancer types in `custom_type_terms`. |
 | `search` | `data_fetch` | `use_ontology: false` (default) searches with the lists above; `true` builds the search from the NCIt concept set named in `search.cohorts` (see `config/ontology/`). |
 | `cBio_studyId`, `pedcBio_studyId` | `data_extract` onward | The cBioPortal / PedcBioPortal studies per cancer type (one ID or a list). Only CCDI subjects that are patients of these studies are extracted. |
+| `modeling_studyId` | `data_process` onward | Optional subset of those studies to model per cancer type (e.g. Glioma: pbta_all). Unset: all. |
 | `expression_profiles` | `data_extract`, `data_process` | The omics per cancer type: `mrna`, `mirna`, `methylation`, `linear_cna`. |
 | `processor.labels` | `data_process`, `benchmark` | Per cancer type: the label column, where it is (`samples` or `patients`), the map from its values to 0/1, and the feature-selection settings. |
 | `patient_similarity_graph`, `model_mogonet`, `post_analysis`, `benchmark` | later steps | Graph, model, analysis and cross-validation settings. |
@@ -174,8 +175,19 @@ pedcBio_studyId:
   "Glioma": "pbta_all"
 ```
 
-To model one study per cancer type (wt_target_2018_pub for Wilms tumor, pbta_all for glioma), leave
-`"Glioma"` out of `cBio_studyId`.
+To fetch and extract both glioma studies but model only one study per cancer type (wt_target_2018_pub
+for Wilms tumor, pbta_all for glioma), add `modeling_studyId`. It is read by `data_process`,
+`data_model`, `graph_construct`, `graph_ai_model`, `post_analysis` and `benchmark`; `data_fetch` and
+`data_extract` still use every study above, so brain_cptac_2020 stays available to
+`scripts/ontology_report.py` and `scripts/label_concordance.py --compare`:
+
+```yaml
+modeling_studyId:
+  "Wilms Tumor": "wt_target_2018_pub"
+  "Glioma": "pbta_all"          # a study ID, "portal:study_id", or a list
+```
+
+Without `modeling_studyId` (or for a cancer type not listed in it), every study is modeled.
 
 By default `data_extract` keeps the samples that CCDI lists for the matched patients and that the
 portal also has. CCDI can list only some of a patient's samples (in TARGET Wilms tumor, 126 of 657),

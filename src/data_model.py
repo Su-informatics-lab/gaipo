@@ -157,6 +157,10 @@ from jsonschema import Draft7Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT7, DRAFT4
 from datetime import datetime, timezone
+try:
+    from .study_scope import is_modeled, modeling_studies, pipeline_cfg
+except ImportError:                      # run as a script from src/
+    from study_scope import is_modeled, modeling_studies, pipeline_cfg  # type: ignore
 import uuid
 # ==============================================================================
 # Utilities. & Helpers
@@ -1827,6 +1831,14 @@ def build_data_model(
         Path((cfg.get("output_roots", {}) or {}).get("fetch_root", "data/fetch")) / "cbioportal_api_request")
     cancer_types = cfg.get("cancer_type_interest", []) or []
     sources = discover_clinical_sources(fetch_root, cancer_types)
+    # modeling_studyId in pipeline_config.yaml (if set) limits the modeled studies, e.g. Glioma -> pbta_all
+    pcfg = pipeline_cfg()
+    for ct in cancer_types:
+        modeling_studies(pcfg, ct)                      # raises on an entry that is not configured
+    skipped = [s for s in sources if not is_modeled(pcfg, s["cancer_type"], s["portal"], s["study_id"])]
+    sources = [s for s in sources if s not in skipped]
+    for s in skipped:
+        print(f"[data_model] not modeled (modeling_studyId): {s['cancer_type']} | {s['portal']} | {s['study_id']}")
     print(f"[data_model] cancer types: {cancer_types}; {len(sources)} clinical source(s) under {fetch_root}")
     for src in sources:
         print(f"   - {src['cancer_type']} | {src['portal']} | {src['study_id']} | {src['dir']}")

@@ -110,6 +110,10 @@ import scipy.sparse as sp
 from sklearn.metrics import pairwise_distances
 import torch
 import networkx as nx
+try:
+    from .study_scope import modeling_studies
+except ImportError:                      # run as a script from src/
+    from study_scope import modeling_studies  # type: ignore
 
 ArrayLike = Union[np.ndarray, pd.DataFrame]
 
@@ -375,7 +379,7 @@ def graph_construct():
 
     for ct in ct_list:
         ct_slug = ct.replace(" ", "_").lower()
-        studies = _studies_for_ct(ct, c_map, p_map)
+        studies = modeling_studies(cfg, ct, _studies_for_ct(ct, c_map, p_map))
         if not studies:
             print(f"[graph] SKIP {ct}: no studies configured.")
             continue

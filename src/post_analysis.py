@@ -86,6 +86,7 @@ from sklearn.metrics import f1_score, accuracy_score, roc_auc_score
 import yaml
 
 # ---- graph / GNN utilities reused from graph_ai and graph_constructor ----
+from .study_scope import is_modeled, modeling_studies
 from .graph_ai import (
     tensors_from_numpy_lists,
     test_epoch,
@@ -167,7 +168,8 @@ def _iter_studies(cfg: dict):
     for portal in ("cbio", "pedcbio"):
         for ct, ids in m.get(portal, {}).items():
             for sid in ids:
-                yield portal, ct, sid
+                if is_modeled(cfg, ct, portal, sid):          # modeling_studyId, if set
+                    yield portal, ct, sid
 
 # =============================================================================
 # Survival analysis (KM)
@@ -299,6 +301,9 @@ def _study_for_ct(cfg: dict, ct: str) -> Tuple[str, str]:
     Resolve (portal, study_id) for a cancer type using config maps.
     Priority: cBio_studyId -> pedcBio_studyId. If not found, try to discover on disk.
     """
+    modeled = modeling_studies(cfg, ct)          # modeling_studyId first (e.g. pbta_all, not brain_cptac_2020)
+    if modeled:
+        return modeled[0]
     maps = [
         ("cBio_studyId", "cbio"),
         ("pedcBio_studyId", "pedcbio"),

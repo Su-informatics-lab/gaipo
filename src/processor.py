@@ -457,6 +457,11 @@ def _find_omics_file(rawData_dir: Path, mod: str, override: Optional[str] = None
             return hits[0]
     raise FileNotFoundError(f"No TSV found for modality '{mod}' in {rawData_dir}")
 
+try:
+    from .study_scope import modeling_studies
+except ImportError:                      # run as a script from src/
+    from study_scope import modeling_studies  # type: ignore
+
 OMICS_MODALITIES = ("mrna", "mirna", "methylation", "linear_cna")
 MODALITY_SYNONYMS = {"microrna": "mirna", "cna": "linear_cna", "cna_linear": "linear_cna"}
 
@@ -681,7 +686,7 @@ def data_process():
 
     for ct in ct_list:
         ct_slug = ct.replace(" ", "_").lower()
-        studies = _studies_for_ct(ct, c_map, p_map)
+        studies = modeling_studies(cfg, ct, _studies_for_ct(ct, c_map, p_map))
         if not studies:
             print(f"[processor] SKIP {ct}: no studies configured.")
             continue

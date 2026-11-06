@@ -49,6 +49,7 @@ from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 import yaml
 
 # Import our graph builders for adjacency handling
+from .study_scope import modeling_studies
 from .graph_constructor import (
     MOGONETGraphParams,
     compute_adaptive_radius_parameter_mogonet,
@@ -673,7 +674,7 @@ def graph_ai_model():
     clinical_graph = bool(clinical_cfg.get("graph", False))
 
     for ct in ct_list:
-        studies = _studies_for_ct(ct, c_map, p_map)
+        studies = modeling_studies(cfg, ct, _studies_for_ct(ct, c_map, p_map))
         if not studies:
             print(f"[graph_ai] SKIP {ct}: no studies configured.")
             continue

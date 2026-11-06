@@ -58,6 +58,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.naive_bayes import GaussianNB
 
 from . import graph_ai as gai
+from .study_scope import modeling_studies
 from .processor import feature_filter_scaler, load_and_prepare
 
 MODELS = ("mogonet", "naive_bayes", "random_forest")
@@ -354,7 +355,7 @@ def run_benchmark():
             continue
         lc = _label_cfg(cfg, ct)
         settings["processor_labels"][ct] = lc
-        for portal, study_id in gai._studies_for_ct(ct, c_map, p_map):
+        for portal, study_id in modeling_studies(cfg, ct, gai._studies_for_ct(ct, c_map, p_map)):
             tag = f"{ct} [{portal}:{study_id}]"
             X, y, clin = load_cohort(cfg, ct, portal, study_id, mods, b["feature_selection"])
             counts = y.value_counts()
