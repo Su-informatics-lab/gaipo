@@ -361,6 +361,29 @@ row per patient), and prints the column used for each row. The first column foun
 python scripts/cohort_table.py --column "Glioma:age=AGE_AT_DIAGNOSIS_DAYS:days"
 ```
 
+### Kaplan–Meier curves (`post_analysis.survival`)
+
+`post_analysis` draws KM curves for each modeled study. `group_col` is a clinical column or `label`
+(the class modeled by `data_process`, named by `class_names`), given once or per cancer type;
+`subset` restricts the curves to the `test` (or `train`) patients of the `data_process` split:
+
+```yaml
+post_analysis:
+  survival:
+    enabled: true
+    group_col:
+      "Wilms Tumor": HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR
+      "Glioma": label                # low- vs high-grade, as modeled
+    subset: {"Glioma": test}         # all (default), train or test
+    time_col: OS_MONTHS
+    status_col: OS_STATUS
+    title: {"Wilms Tumor": "OS by histology", "Glioma": "OS by grade group"}
+    out_dir: data/analysis/km
+```
+
+It writes `data/analysis/km/<portal>/<type>/<study_id>/km.png` and `km_stats.tsv` (patients, events
+and median survival per group, log-rank p-value).
+
 ## Docker Compose
 
 Docker Compose provides the most reproducible way to build and run GAIPO.

@@ -87,6 +87,7 @@ import yaml
 
 # ---- graph / GNN utilities reused from graph_ai and graph_constructor ----
 from .study_scope import is_modeled, modeling_studies
+from .cohort import class_names, load_labels
 from .graph_ai import (
     tensors_from_numpy_lists,
     test_epoch,
@@ -175,15 +176,24 @@ def _iter_studies(cfg: dict):
 # Survival analysis (KM)
 # =============================================================================
 
-def plot_km_curves(clinical_df: pd.DataFrame, group_col: str, surv_time: str, surv_status: str, filename: str, title: str):
+def _p_text(p: float) -> str:
+    return "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
+
+
+def plot_km_curves(clinical_df: pd.DataFrame, group_col: str, surv_time: str, surv_status: str, filename: str,
+                   title: str, order: Optional[Sequence] = None, xlabel: Optional[str] = None) -> pd.DataFrame:
     """
     Plot Kaplan–Meier curves stratified by group_col and save to 'filename'.
     clinical_df columns: surv_time (e.g., OS_MONTHS), surv_status (0/1), group_col.
+    order: groups in plotting (and color) order; default sorted. Returns one row per group
+    (n, events, median survival) with the log-rank p-value.
     """
     kmf = KaplanMeierFitter()
     plt.figure(figsize=(8, 6))
-    groups = clinical_df[group_col].dropna().unique()
+    present = list(clinical_df[group_col].dropna().unique())
+    groups = [g for g in order if g in present] if order is not None else sorted(present, key=str)
 
+    stats = []
     for grp in groups:
         ix = clinical_df[group_col] == grp
         kmf.fit(
@@ -192,6 +202,8 @@ def plot_km_curves(clinical_df: pd.DataFrame, group_col: str, surv_time: str, su
             label=str(grp),
         )
         kmf.plot_survival_function()
+        stats.append({"group": grp, "n": int(ix.sum()), "events": int(clinical_df.loc[ix, surv_status].sum()),
+                      "median_survival": float(kmf.median_survival_time_)})
 
     ax = plt.gca()
     x_min, x_max = ax.get_xlim()
@@ -199,22 +211,28 @@ def plot_km_curves(clinical_df: pd.DataFrame, group_col: str, surv_time: str, su
     x_text = x_min + 0.1 * (x_max - x_min)
     y_text = y_min + 0.1 * (y_max - y_min)
 
+    p = np.nan
     if len(groups) == 2:
         g1 = clinical_df[clinical_df[group_col] == groups[0]]
         g2 = clinical_df[clinical_df[group_col] == groups[1]]
         res = logrank_test(g1[surv_time], g2[surv_time], event_observed_A=g1[surv_status], event_observed_B=g2[surv_status])
-        ax.text(x_text, y_text, f"Log-Rank p = {res.p_value:.4f}", fontsize=11, bbox=dict(facecolor="white", alpha=0.6))
+        p = float(res.p_value)
+        ax.text(x_text, y_text, f"Log-rank {_p_text(p)}", fontsize=11, bbox=dict(facecolor="white", alpha=0.6))
     elif len(groups) > 2:
         res = multivariate_logrank_test(clinical_df[surv_time], clinical_df[group_col], clinical_df[surv_status])
-        ax.text(x_text, y_text, f"Multivariate Log-Rank p = {res.p_value:.4f}", fontsize=11, bbox=dict(facecolor="white", alpha=0.6))
+        p = float(res.p_value)
+        ax.text(x_text, y_text, f"Multivariate log-rank {_p_text(p)}", fontsize=11, bbox=dict(facecolor="white", alpha=0.6))
 
     plt.title(title)
-    plt.xlabel("Time")
+    plt.xlabel(xlabel or "Time")
     plt.ylabel("Survival Probability")
     Path(filename).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(filename, bbox_inches="tight")
     plt.close()
     print(f"[post] Saved KM plot -> {filename}")
+    out = pd.DataFrame(stats)
+    out["logrank_p"] = p
+    return out
 
 
 def _derive_os_binary(df: pd.DataFrame, status_col: str = "OS_STATUS") -> pd.Series:
@@ -232,26 +250,48 @@ def _derive_os_binary(df: pd.DataFrame, status_col: str = "OS_STATUS") -> pd.Ser
     return out.astype(int)
 
 
+def _for_type(value, ct: str, default=None):
+    """A survival setting given once for every cancer type, or per type as {type: value}."""
+    if isinstance(value, dict):
+        return value.get(ct, default)
+    return default if value is None else value
+
+
 def run_km_survival():
+    """
+    KM curves per modeled study (post_analysis.survival):
+      group_col  clinical column, or "label" (the class modeled by data_process, named by
+                 processor.labels.<type>.class_names); one value, or one per cancer type
+      subset     all (train + test, default), train or test (the split of data_process)
+      time_col, status_col, title, out_dir
+    Writes km.png and km_stats.tsv (n, events, median survival per group; log-rank p).
+    """
     cfg = _cfg()
     pa = (cfg.get("post_analysis") or {}).get("survival") or {}
     if not pa or not pa.get("enabled", False):
         print("[post] KM survival disabled or not configured.")
         return
 
-    group_col = pa.get("group_col")
     time_col  = pa.get("time_col", "OS_MONTHS")
     status_c  = pa.get("status_col", "OS_STATUS")
-    title     = pa.get("title", "Survival")
     out_root  = Path(pa.get("out_dir", "data/analysis/km"))
 
-    if not group_col:
+    if not pa.get("group_col"):
         print("[post] KM survival requires 'group_col' in config.post_analysis.survival.")
         return
 
     # iterate per study (portal/ct/study_id)
     for portal, ct, study_id in _iter_studies(cfg):
         ct_slug = _slug(ct)
+        group_col = _for_type(pa.get("group_col"), ct)
+        subset = str(_for_type(pa.get("subset"), ct, "all")).lower()
+        title = _for_type(pa.get("title"), ct, "Survival")
+        if not group_col:
+            print(f"[post] {portal}/{ct}/{study_id}: no group_col for this cancer type; skipping KM.")
+            continue
+        if subset not in ("all", "train", "test"):
+            print(f"[post] {portal}/{ct}/{study_id}: subset must be all, train or test (got {subset!r}); skipping KM.")
+            continue
         filt_dir = Path("data/gdm/filtered") / portal / ct_slug / study_id
 
         pat = None
@@ -272,6 +312,25 @@ def run_km_survival():
                     print(f"[post] No clinical table for {portal}/{ct}/{study_id}; skipping.")
                     continue
                 pat = pd.read_parquet(gdm_sub)
+        if "patientId" not in pat.columns and "subject_id" in pat.columns:
+            pat = pat.rename(columns={"subject_id": "patientId"})
+
+        order = None
+        if group_col == "label" or subset != "all":
+            try:
+                lab = load_labels(portal, ct, study_id)
+            except FileNotFoundError as e:
+                print(f"[post] {portal}/{ct}/{study_id}: {e}; skipping KM.")
+                continue
+            names = class_names(cfg, ct)
+            lab = lab.rename(columns={"label": "__label", "split": "__split"})
+            lab["__class"] = lab["__label"].map(lambda k: names.get(int(k), f"label {k}"))
+            pat = pat.assign(patientId=pat["patientId"].astype(str).str.strip()).merge(lab, on="patientId", how="inner")
+            if subset != "all":
+                pat = pat[pat["__split"] == subset]
+            if group_col == "label":
+                group_col = "__class"
+                order = [names.get(int(k), f"label {k}") for k in sorted(lab["__label"].unique())]
 
         if time_col not in pat.columns:
             print(f"[post] {portal}/{ct}/{study_id}: time_col '{time_col}' not found; skipping.")
@@ -281,6 +340,7 @@ def run_km_survival():
             continue
 
         df = pat.copy()
+        df[time_col] = pd.to_numeric(df[time_col], errors="coerce")
         df["__status_bin"] = _derive_os_binary(df, status_col=status_c)
         ix = df[time_col].notna() & df["__status_bin"].notna()
         df = df.loc[ix, [group_col, time_col, "__status_bin"]].copy()
@@ -288,8 +348,16 @@ def run_km_survival():
             print(f"[post] {portal}/{ct}/{study_id}: no rows with survival info; skipping.")
             continue
 
-        out_png = out_root / portal / ct_slug / study_id / f"km.png"
-        plot_km_curves(df, group_col, time_col, "__status_bin", str(out_png), f"{title} — {ct} [{study_id}]")
+        out_dir = out_root / portal / ct_slug / study_id
+        unit = "Months" if "MONTH" in str(time_col).upper() else ("Days" if "DAY" in str(time_col).upper() else None)
+        full_title = f"{title} — {ct} [{study_id}]" + ("" if subset == "all" else f" ({subset} set)")
+        stats = plot_km_curves(df, group_col, time_col, "__status_bin", str(out_dir / "km.png"), full_title,
+                               order=order, xlabel=f"Time ({unit})" if unit else time_col)
+        stats.insert(0, "subset", subset)
+        stats.to_csv(out_dir / "km_stats.tsv", sep="\t", index=False)
+        print(f"[post] {portal}/{ct}/{study_id}: " + "; ".join(
+            f"{r.group}: n={r.n}, events={r.events}" for r in stats.itertuples())
+              + (f"; log-rank p={stats.logrank_p.iloc[0]:.3g}" if len(stats) > 1 else ""))
 
 
 # =============================================================================
