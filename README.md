@@ -248,6 +248,9 @@ processor:
 
 `map` is either a string (`"FHWT=0,DAWT=1"`) or a YAML mapping as above; use the mapping when a value
 contains a comma (e.g. "Low-Grade Glioma, NOS or NEC"). Several values can map to the same class.
+Optional `class_names` (e.g. `class_names: {0: Low-grade, 1: High-grade}`) names the classes in the
+cohort table and the KM plots; without it, names come from the map (the single value of a class, or
+Low-grade / High-grade when every value of the class says so).
 
 The labels apply to every study of a cancer type. If two studies of one type use different values (as PBTA and CPTAC do), process one study at a time by commenting out the other study ID in step 3. To model only the classes in the map (e.g. low- vs high-grade glioma when the extract also holds other tumor types or blank values), add `drop_unmapped: true` under the cancer type: samples whose value is missing or not in the map are then left out, and the processor prints how many per value.
 
@@ -335,6 +338,28 @@ python -m src.main --call benchmark
 ```
 
 Settings are in the `benchmark` block of `config/pipeline_config.yaml` (`n_splits`, `seed`, `sd_ddof`, `models`, `feature_selection`); MOGONET uses the `model_mogonet` hyperparameters. With `feature_selection: in_fold` (default), the processor's feature selection and min-max scaling are refitted on each training fold, so test folds are not used before prediction; this needs the `data_extract` outputs. `feature_selection: precomputed` reuses the `data_process` matrices, which were selected on all patients. Results are written to `data/analysis/benchmark/` (`cv_folds.csv` per fold, `cv_splits.csv` with the fold assignment of every patient, and `cv_summary.csv` / `cv_summary.md` with mean ± SD).
+
+### Cohort table (Table 2)
+
+After `data_process`, `scripts/cohort_table.py` tabulates the modeled patients (`labels_train.csv` +
+`labels_test.csv` of each modeled study) by class, with their clinical values from the extract
+(`clinical_patients.csv`, then `clinical_samples.csv`): age at diagnosis (No. (%) and median (IQR),
+overall and in 0-5, 6-11 and 12+ years), sex, ethnicity, race, OS status and follow-up, EFS status
+and event-free follow-up, and clinical stage.
+
+```bash
+python scripts/cohort_table.py                 # every cancer type in cancer_type_interest
+```
+
+It writes `data/analysis/cohort_table/cohort_table.tsv` and `.md` (one column per class, then All),
+`cohort_values.tsv` (every source value and the row it was counted in) and `cohort_patients.tsv` (one
+row per patient), and prints the column used for each row. The first column found is used (e.g. age:
+`AGE`, then `AGE_AT_DIAGNOSIS`, `AGE_IN_DAYS`, `AGE_AT_DIAGNOSIS_DAYS`; EFS: `EFS_STATUS`, then
+`EVENT_TYPE`, where a blank TARGET event type is no event). To use another column or unit:
+
+```bash
+python scripts/cohort_table.py --column "Glioma:age=AGE_AT_DIAGNOSIS_DAYS:days"
+```
 
 ## Docker Compose
 
