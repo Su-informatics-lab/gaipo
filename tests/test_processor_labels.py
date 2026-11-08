@@ -66,3 +66,17 @@ def test_omics_file_override_and_portal_sample_mapping(tmp_path):
                            select_features=False, omics_files={"mrna": "s_mrna.tsv"})
     y = pd.concat([out[2], out[3]])
     assert len(y) == 10                                # all 10 patients, not only the 6 CCDI lists
+
+
+def test_clinical_filtered_keeps_sample_attributes_of_pbta_patients():
+    """PBTA sample IDs (7316-1781) do not contain the patient ID (PT_...): use the portal's patientId."""
+    from src.processor import _build_clinical_filtered
+    pat = pd.DataFrame({"patientId": ["PT_A", "PT_B", "TARGET-50-X"], "OS_MONTHS": [10, 20, 30]})
+    sam = pd.DataFrame({"sampleId": ["7316-1781", "7316-878", "7316-900", "TARGET-50-X-01"],
+                        "patientId": ["PT_A", "PT_A", "PT_B", np.nan],
+                        "AGE": [5.0, 7.0, 12.0, 3.0],
+                        "CANCER_TYPE": [np.nan, "Low-grade glioma", "High-grade glioma", "Wilms"]})
+    out = _build_clinical_filtered(pat, sam, ["PT_A", "PT_B", "TARGET-50-X"]).set_index("patientId")
+    assert out.loc["PT_A", "CANCER_TYPE"] == "Low-grade glioma" and out.loc["PT_A", "AGE"] == 6.0
+    assert out.loc["PT_B", "CANCER_TYPE"] == "High-grade glioma"
+    assert out.loc["TARGET-50-X", "CANCER_TYPE"] == "Wilms"          # no patientId: derived from sampleId

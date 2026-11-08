@@ -355,7 +355,9 @@ def _derive_patient_from_sample_index_like(series: pd.Series) -> pd.Series:
 def _patient_aggregate_samples(clin_sam: pd.DataFrame) -> pd.DataFrame:
     """
     Aggregate clinical_samples to patientId level:
-      - Create patientId from sampleId (strip '-NN' suffix).
+      - patientId: the portal's own patientId column of clinical_samples.csv. Only where it is
+        missing is it derived from sampleId (strip '-NN': TARGET-50-CAAAAC-01 -> TARGET-50-CAAAAC);
+        PBTA / CBTN sample IDs (7316-1781) do not contain their patient ID (PT_M1RYN7B0).
       - For duplicate patients, numeric columns -> mean; non-numeric -> first non-null.
     Returns a DataFrame indexed by patientId.
     """
@@ -364,7 +366,13 @@ def _patient_aggregate_samples(clin_sam: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     sam = clin_sam.copy()
-    sam["patientId"] = _derive_patient_from_sample_index_like(sam["sampleId"])
+    derived = _derive_patient_from_sample_index_like(sam["sampleId"])
+    if "patientId" in sam.columns:
+        own = sam["patientId"]
+        has_own = own.notna() & (own.astype(str).str.strip() != "")
+        sam["patientId"] = own.astype(object).where(has_own, derived).astype(str).str.strip()
+    else:
+        sam["patientId"] = derived
 
     # Split numeric vs. non-numeric
     num_cols = sam.select_dtypes(include=["number"]).columns.tolist()
