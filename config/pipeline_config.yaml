@@ -80,6 +80,10 @@ modeling_studyId:
   "Wilms Tumor": "wt_target_2018_pub"
   "Glioma": "pbta_all"
 
+# samples data_extract keeps per study (default for every type: ccdi = the CCDI-listed samples)
+extract:
+  samples: {"Glioma": patients}   # CCDI lists PBTA samples as BS_ IDs: take every portal sample of the matched patients
+
 # What expression profiles to pull for each type
 # valid keys: mrna, mirna, methylation, linear_cna
 expression_profiles:
@@ -116,7 +120,7 @@ processor:
       class_names: {0: Low-grade, 1: High-grade}
       omics_files:
         mrna: pbta_all_rna_seq_v2_mrna.tsv
-        # linear_cna: <CNA file from step 2>
+        linear_cna: pbta_all_linear_CNA.tsv
       # mrna, linear_cna
       var_threshold: [0.1, 0.01]
       alpha: [0.05, 0.10]
