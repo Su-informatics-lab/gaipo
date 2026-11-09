@@ -150,8 +150,8 @@ model_mogonet:
 
 # 12) post_analysis.py
 post_analysis:
-  survival:
-    enabled: true
+    survival:
+      enabled: true
     group_col:
       "Wilms Tumor": HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR
       "Glioma": label
