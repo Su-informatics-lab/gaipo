@@ -61,6 +61,7 @@ def test_repeated_attribute_rows_keep_the_first(extractor, capsys):
 
 
 def test_samples_fall_back_to_the_portal_when_ccdi_lists_none_of_them(extractor, monkeypatch):
+    monkeypatch.setattr(extractor, "_SAMPLE_SCOPE", "ccdi")     # default, whatever config/pipeline_config.yaml sets
     portal = ["7316-1", "7316-2", "7316-3"]
     # PBTA: CCDI's portal-form IDs belong to other studies -> every portal sample of the matched patients
     ids, note = extractor.select_samples("Glioma", ["SJHGG01", "TH_9"], portal)

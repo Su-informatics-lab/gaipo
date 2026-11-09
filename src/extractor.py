@@ -706,6 +706,9 @@ def data_extract():
                 print(f"[{ct} / {portal}:{study_id}] {note}")
 
             print(f"[{ct} / {portal}:{study_id}] using {len(sample_ids)} samples for sample-clinical & omics fetch")
+            if not sample_ids:
+                print(f"[WARN] {ct} / {portal}:{study_id}: no samples to extract; clinical_samples.csv will be "
+                      f"empty and no omics file is written (earlier omics files in {outdir} are left as they were)")
             
             # 3) Sample clinical for selected samples
             samp_df = fetch_sample_clinical(client, study_id, sample_ids)

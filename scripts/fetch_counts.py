@@ -63,13 +63,21 @@ def ccdi_table(ids: dict) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["cancer_type", "entity", "source", "ids"])
 
 
+def _read(path: Path, **kw) -> pd.DataFrame:
+    """CSV/TSV as a DataFrame; a missing or empty file (data_extract found no samples) -> empty."""
+    try:
+        return pd.read_csv(path, **kw)
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        return pd.DataFrame()
+
+
 def extracted_table(root: Path) -> pd.DataFrame:
     rows = []
     for pat in sorted((root / "cbioportal_api_request").glob("*/*/*/clinical_patients.csv")):
         d = pat.parent
         portal, ct, study = d.parts[-3:]
-        p = pd.read_csv(pat, dtype=str)
-        s = pd.read_csv(d / "clinical_samples.csv", dtype=str) if (d / "clinical_samples.csv").exists() else pd.DataFrame()
+        p = _read(pat, dtype=str)
+        s = _read(d / "clinical_samples.csv", dtype=str)
         s2p = (s.dropna(subset=["patientId"]).set_index("sampleId")["patientId"]
                if {"sampleId", "patientId"} <= set(s.columns) else pd.Series(dtype=str))
         row = {"cancer_type": ct, "portal": portal, "study_id": study,
@@ -77,12 +85,16 @@ def extracted_table(root: Path) -> pd.DataFrame:
                "samples": s["sampleId"].nunique() if "sampleId" in s else len(s)}
         with_all = None
         for tsv in sorted(d.glob("*.tsv")):
-            cols = pd.read_csv(tsv, sep="\t", nrows=0).columns
+            cols = _read(tsv, sep="\t", nrows=0).columns
             samples = [c for c in cols if c not in ("hugoGeneSymbol", "entrezGeneId")]
             row[f"samples_in:{tsv.stem}"] = len(samples)
             pts = set(s2p.reindex(samples).dropna())
             with_all = pts if with_all is None else with_all & pts
         row["patients_with_every_omics_file"] = len(with_all) if with_all is not None else None
+        empty = [f.name for f in (pat, d / "clinical_samples.csv") if f.exists() and f.stat().st_size < 2]
+        if empty:
+            print(f"[fetch_counts] WARN {portal}/{ct}/{study}: empty {', '.join(empty)} "
+                  "(data_extract found no patients or samples there)")
         rows.append(row)
     return pd.DataFrame(rows)
 

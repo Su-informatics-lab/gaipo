@@ -50,3 +50,14 @@ def test_counts_and_comparison(tmp_path, monkeypatch):
     added = pd.read_csv(tmp_path / "out/added_glioma_subject.tsv", sep="\t")
     assert set(added.nid) == {"PT_B", "SJ1"}
     assert (tmp_path / "out/summary.md").read_text().count("|") > 10
+
+
+def test_empty_clinical_samples_after_a_run_without_samples(tmp_path, capsys):
+    d = tmp_path / "cbioportal_api_request/cbio/glioma/brain_cptac_2020"
+    d.mkdir(parents=True)
+    pd.DataFrame({"patientId": ["PT_A", "PT_B"]}).to_csv(d / "clinical_patients.csv", index=False)
+    pd.DataFrame().to_csv(d / "clinical_samples.csv", index=False)          # what data_extract writes for 0 samples
+    pd.DataFrame(columns=["hugoGeneSymbol", "entrezGeneId", "7316-1"]).to_csv(d / "old_cna.tsv", sep="\t", index=False)
+    t = fc.extracted_table(tmp_path)
+    assert t.loc[0, "patients"] == 2 and t.loc[0, "samples"] == 0 and t.loc[0, "patients_with_every_omics_file"] == 0
+    assert "empty clinical_samples.csv" in capsys.readouterr().out
