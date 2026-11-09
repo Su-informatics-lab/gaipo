@@ -159,7 +159,6 @@ post_analysis:
     title: {"Wilms Tumor": "OS by histology", "Glioma": "OS by grade group"}
     time_col: OS_MONTHS
     status_col: OS_STATUS
-    title: "Overall Survival by Histology"
     out_dir: data/analysis/km
 
   feature_selection:
