@@ -265,6 +265,27 @@ def is_probable_sample_id(s: str) -> bool:
     return isinstance(s, str) and bool(s.strip()) and (not is_specimen_id(s))
 
 # ─── 4) Portal-aware clinical fetchers ─────────────────────────────────────────
+def unique_normalized(ids, norm) -> list[str]:
+    """Normalized IDs, each once, in input order. CCDI can list one patient twice in different
+    forms (e.g. 'pt-z4a9dmas' and 'PT_Z4A9DMAS', from two sources); both become 'PT_Z4A9DMAS'."""
+    return list(dict.fromkeys(n for n in (norm(x) for x in ids) if n))
+
+
+def _pivot_clinical(df: pd.DataFrame, index: str, what: str) -> pd.DataFrame:
+    """One row per patient or sample, one column per clinical attribute. A (record, attribute)
+    pair returned more than once keeps its first value, and the repeats are reported."""
+    key = [index, "clinicalAttributeId"]
+    dup = df.duplicated(key, keep="first")
+    if dup.any():
+        n_diff = int((df[df.duplicated(key, keep=False)].groupby(key)["value"].nunique(dropna=False) > 1).sum())
+        print(f"   – {what}: {int(dup.sum())} repeated attribute rows dropped"
+              + (f" ({n_diff} attributes with differing values: first kept)" if n_diff else ""))
+        df = df[~dup]
+    return (df.pivot(index=index, columns="clinicalAttributeId", values="value")
+              .reset_index()
+              .rename_axis(None, axis=1))
+
+
 def fetch_patient_clinical(client, study_id: str, patient_ids: list[str]) -> tuple[pd.DataFrame, set[str]]:
     """
     Returns (patient_clinical_df, ok_patients_set)
@@ -272,8 +293,7 @@ def fetch_patient_clinical(client, study_id: str, patient_ids: list[str]) -> tup
     """
     recs = []
     ok_patients = set()
-    for raw_pid in patient_ids:
-        pid = norm_patient_id_for_cbio(raw_pid)
+    for pid in unique_normalized(patient_ids, norm_patient_id_for_cbio):
         try:
             out = client.Clinical_Data.getAllClinicalDataOfPatientInStudyUsingGET(
                 studyId=study_id,
@@ -300,9 +320,7 @@ def fetch_patient_clinical(client, study_id: str, patient_ids: list[str]) -> tup
     df = pd.DataFrame(recs)
     if df.empty or "patientId" not in df.columns:
         return pd.DataFrame(), ok_patients
-    dfp = (df.pivot(index="patientId", columns="clinicalAttributeId", values="value")
-             .reset_index()
-             .rename_axis(None, axis=1))
+    dfp = _pivot_clinical(df, "patientId", f"patient clinical of {study_id}")
     return dfp, ok_patients
 
 def fetch_samples_for_patients(client, study_id: str, patient_ids: list[str]) -> list[str]:
@@ -329,8 +347,7 @@ def fetch_samples_for_patients(client, study_id: str, patient_ids: list[str]) ->
 
 def fetch_sample_clinical(client, study_id: str, sample_ids: list[str]) -> pd.DataFrame:
     recs = []
-    for raw_sid in sample_ids:
-        sid = norm_sample_id_for_cbio(raw_sid)
+    for sid in unique_normalized(sample_ids, norm_sample_id_for_cbio):
         try:
             out = client.Clinical_Data.getAllClinicalDataOfSampleInStudyUsingGET(
                 studyId=study_id,
@@ -356,9 +373,7 @@ def fetch_sample_clinical(client, study_id: str, sample_ids: list[str]) -> pd.Da
     df = pd.DataFrame(recs)
     if df.empty or "sampleId" not in df.columns:
         return pd.DataFrame()
-    dfs = (df.pivot(index="sampleId", columns="clinicalAttributeId", values="value")
-             .reset_index()
-             .rename_axis(None, axis=1))
+    dfs = _pivot_clinical(df, "sampleId", f"sample clinical of {study_id}")
     # keep the sample -> patient link: non-TARGET studies (PBTA, CPTAC) use unrelated
     # sample/patient ids (BS_... / PT_...), so it cannot be derived from sampleId later
     s2p = df.dropna(subset=["patientId"]).drop_duplicates("sampleId").set_index("sampleId")["patientId"]
@@ -588,8 +603,10 @@ def data_extract():
 
             subj_df  = pd.read_csv(subj_file, usecols=["subject_id"])
             subj_ids_raw  = sorted(subj_df["subject_id"].astype(str).unique())
-            subj_ids_norm = [norm_patient_id_for_cbio(x) for x in subj_ids_raw]
-            print(f"[{ct} / {portal}:{study_id}] Loaded {len(subj_ids_norm)} subject IDs")
+            subj_ids_norm = unique_normalized(subj_ids_raw, norm_patient_id_for_cbio)
+            print(f"[{ct} / {portal}:{study_id}] Loaded {len(subj_ids_raw)} subject IDs"
+                  + (f" ({len(subj_ids_norm)} after normalizing: the same patient listed as e.g. 'pt-…' and 'PT_…')"
+                     if len(subj_ids_norm) < len(subj_ids_raw) else ""))
 
             # 1) Patient clinical + ok-patient set
             print(f"[{ct} / {portal}:{study_id}] fetching patient clinical…")
@@ -611,9 +628,10 @@ def data_extract():
                 s_df = pd.read_csv(sample_file, usecols=["sample_id"])
                 raw_csv = sorted(s_df["sample_id"].astype(str).unique())
                 # Drop CCDI biospecimen ids (BS_/bs-) and dot-suffixed assay identifiers
-                sample_ids_csv_filtered = [norm_sample_id_for_cbio(s) for s in raw_csv if is_probable_sample_id(s)]
+                sample_ids_csv_filtered = unique_normalized([s for s in raw_csv if is_probable_sample_id(s)],
+                                                            norm_sample_id_for_cbio)
                 kept = len(sample_ids_csv_filtered)
-                dropped = len(raw_csv) - kept
+                dropped = sum(not is_probable_sample_id(x) for x in raw_csv)
                 print(f"[{ct} / {portal}:{study_id}] Loaded {len(raw_csv)} from CSV, "
                     f"kept {kept} probable SAMPLE_IDs, dropped {dropped} SPECIMEN_IDs.")
                 # If we kept zero, mark as None so we will fall back to API-derived sample IDs
