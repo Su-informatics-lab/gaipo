@@ -128,6 +128,11 @@ def sample_scope(ct: str) -> str:
     v = _SAMPLE_SCOPE.get(ct, "ccdi") if isinstance(_SAMPLE_SCOPE, dict) else _SAMPLE_SCOPE
     return str(v or "ccdi").strip().lower()
 
+
+# omics are fetched this many samples per request: one request for every sample of a large study
+# (e.g. all pbta_all samples of the glioma patients) is several GB of JSON
+CHUNK_SAMPLES = int((cfg.get("extract") or {}).get("chunk_samples", 200))
+
 # optional auth tokens (env overrides)
 # Tokens: environment variables first, so no token needs to live in config files under git
 CBIO_TOKEN = os.getenv("CBIOPORTAL_API_TOKEN") or (cfg.get("auth", {}) or {}).get("cbioportal_api_token")
@@ -426,8 +431,18 @@ def fetch_profile_data(api_base: str, headers: dict, profile_id: str, sample_ids
     url  = f"{api_base}/molecular-profiles/{profile_id}/molecular-data/fetch"
     body = {"sampleIds": [norm_sample_id_for_cbio(s) for s in sample_ids]}
     params = {"projection": "DETAILED"}
-    resp = requests.post(url, params=params, json=body, timeout=120, headers=headers)
-    resp.raise_for_status()
+    for attempt in range(3):                     # retry timeouts, dropped connections and 5xx
+        try:
+            resp = requests.post(url, params=params, json=body, timeout=120, headers=headers)
+            if resp.status_code >= 500 and attempt < 2:
+                raise requests.HTTPError(f"HTTP {resp.status_code}")
+            resp.raise_for_status()
+            break
+        except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as e:
+            if attempt == 2 or (isinstance(e, requests.HTTPError) and getattr(e.response, "status_code", 500) < 500):
+                raise
+            print(f"   – {profile_id}: {e}; retrying")
+            time.sleep(10 * (attempt + 1))
     data = resp.json() or []
     if not data:
         return pd.DataFrame()
@@ -446,6 +461,44 @@ def fetch_profile_data(api_base: str, headers: dict, profile_id: str, sample_ids
         })
     df = pd.DataFrame.from_records(records)
     return df.drop_duplicates(subset=["molecularProfileId","hugoGeneSymbol","entrezGeneId","sampleId"])
+
+def fetch_profile_wide(api_base: str, headers: dict, profile_id: str, sample_ids: list[str],
+                       chunk: int = None) -> pd.DataFrame:
+    """Gene x sample matrix of one profile (hugoGeneSymbol, entrezGeneId, one column per sample),
+    fetched `chunk` samples per request (extract.chunk_samples, default 200)."""
+    chunk = max(1, int(chunk or CHUNK_SAMPLES))
+    parts = []
+    for i in range(0, len(sample_ids), chunk):
+        df_long = fetch_profile_data(api_base, headers, profile_id, sample_ids[i:i + chunk])
+        if not df_long.empty:
+            parts.append(pivot_profile_data(df_long).set_index(["hugoGeneSymbol", "entrezGeneId"]))
+    if not parts:
+        return pd.DataFrame()
+    wide = pd.concat(parts, axis=1) if len(parts) > 1 else parts[0]
+    wide = wide.loc[:, ~wide.columns.duplicated()].astype("float64")   # same dtype whatever the chunks
+    return wide.reset_index().rename_axis(None, axis=1)
+
+
+def select_samples(ct: str, sample_ids_csv, sample_ids_from_ok: list[str]) -> tuple[list[str], str]:
+    """Samples to extract for one study, and a note for the log.
+    extract.samples: patients -> every portal sample of the matched patients. Default (ccdi): the
+    CCDI-listed sample IDs that are samples of the study; if CCDI lists none of them in portal form
+    (it lists PBTA / CPTAC samples as BS_ biospecimen IDs), every portal sample of the matched patients."""
+    if sample_scope(ct) == "patients" and sample_ids_from_ok:
+        return list(sample_ids_from_ok), (f"extract.samples = patients: every portal sample of the matched "
+                                          f"patients ({len(sample_ids_from_ok)})")
+    if sample_ids_csv is None:
+        return list(sample_ids_from_ok), ""
+    if not sample_ids_from_ok:
+        return sorted(set(sample_ids_csv)), ""
+    both = sorted(set(sample_ids_csv).intersection(sample_ids_from_ok))
+    if both:
+        return both, ""
+    return list(sample_ids_from_ok), (f"none of the {len(sample_ids_csv)} CCDI sample IDs is a sample of this study "
+                                      f"(CCDI lists its samples under other IDs): using every portal sample of the "
+                                      f"matched patients ({len(sample_ids_from_ok)}); extract.samples: patients "
+                                      f"makes this explicit")
+
 
 def pivot_profile_data(df_long: pd.DataFrame) -> pd.DataFrame:
     if df_long.empty:
@@ -648,14 +701,9 @@ def data_extract():
             #  - extract.samples: patients -> every portal sample of the matched patients
             #    (CCDI may list only some samples of a patient, e.g. TARGET Wilms tumor)
             #  - otherwise (default "ccdi"): CSV sample ids that the portal also has, else API-derived samples.
-            if sample_scope(ct) == "patients" and sample_ids_from_ok:
-                sample_ids = sample_ids_from_ok
-                print(f"[{ct} / {portal}:{study_id}] extract.samples = patients: every portal sample of the "
-                      f"matched patients ({len(sample_ids)})")
-            elif sample_ids_csv is not None:
-                sample_ids = sorted(set(sample_ids_csv).intersection(sample_ids_from_ok) if sample_ids_from_ok else set(sample_ids_csv))
-            else:
-                sample_ids = sample_ids_from_ok
+            sample_ids, note = select_samples(ct, sample_ids_csv, sample_ids_from_ok)
+            if note:
+                print(f"[{ct} / {portal}:{study_id}] {note}")
 
             print(f"[{ct} / {portal}:{study_id}] using {len(sample_ids)} samples for sample-clinical & omics fetch")
             
@@ -682,12 +730,10 @@ def data_extract():
                     for p in profs:
                         pid = p["molecularProfileId"]
                         print(f"[{ct} / {portal}:{study_id}] fetching {pid}…")
-                        df_long = fetch_profile_data(api_base, headers, pid, sample_ids)
-                        if df_long.empty:
+                        df_wide = fetch_profile_wide(api_base, headers, pid, sample_ids)
+                        if df_wide.empty:
                             print(f"   – {pid} returned 0 rows (samples passed: {len(sample_ids)})")
                             continue
-
-                        df_wide = pivot_profile_data(df_long)
                         outfn = outdir / f"{pid}.tsv"
                         df_wide.to_csv(outfn, sep="\t", index=False)
                         print(f"[{ct} / {portal}:{study_id}] wrote {len(df_wide):,} genes × {len(df_wide.columns)-2:,} samples -> {outfn}")

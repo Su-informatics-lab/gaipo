@@ -199,6 +199,11 @@ extract:
     "Wilms Tumor": patients   # default for every type: ccdi; a single value applies to all types
 ```
 
+CCDI lists PBTA and CPTAC samples under biospecimen IDs (`BS_…`), not the portal's sample IDs
+(`7316-…`). When none of the CCDI sample IDs is a sample of the study, `data_extract` takes every
+portal sample of the matched patients and says so in the log; `samples: {"Glioma": patients}` makes
+this explicit. Omics are fetched 200 samples per request (`extract: chunk_samples: 200`).
+
 PedcBioPortal needs a data-access token. Set it in the shell (or in a git-ignored `.env` file next to `docker-compose.yml`) and leave `auth:` in the YAML as `null`:
 
 ```bash

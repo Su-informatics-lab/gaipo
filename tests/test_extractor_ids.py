@@ -58,3 +58,65 @@ def test_repeated_attribute_rows_keep_the_first(extractor, capsys):
     calls = []
     sam = extractor.fetch_sample_clinical(_client(calls, rows), "s", ["7316-1", "7316-1", "bs-xyz", "BS_XYZ"])
     assert calls == ["7316-1", "BS_XYZ"] and sam.set_index("sampleId").loc["7316-1", "patientId"] == "PT_ABC"
+
+
+def test_samples_fall_back_to_the_portal_when_ccdi_lists_none_of_them(extractor, monkeypatch):
+    portal = ["7316-1", "7316-2", "7316-3"]
+    # PBTA: CCDI's portal-form IDs belong to other studies -> every portal sample of the matched patients
+    ids, note = extractor.select_samples("Glioma", ["SJHGG01", "TH_9"], portal)
+    assert ids == portal and "none of the 2 CCDI sample IDs" in note
+    # TARGET Wilms tumor: CCDI lists some of the portal samples -> only those (the 114-patient cohort)
+    assert extractor.select_samples("Wilms Tumor", ["TARGET-50-A-01", "X"], ["TARGET-50-A-01", "TARGET-50-B-01"]) == \
+        (["TARGET-50-A-01"], "")
+    assert extractor.select_samples("Glioma", None, portal) == (portal, "")
+    monkeypatch.setattr(extractor, "_SAMPLE_SCOPE", {"Glioma": "patients"})
+    assert extractor.select_samples("Glioma", ["7316-1"], portal)[0] == portal
+
+
+def test_omics_fetched_in_chunks_give_the_same_matrix(extractor, monkeypatch):
+    import numpy as np
+    import pandas as pd
+    samples = [f"S{i:02d}" for i in range(7)]
+    genes = [("G1", 1), ("G2", 2), ("G3", 3)]
+    calls = []
+
+    def fake_fetch(api_base, headers, profile_id, sample_ids):
+        calls.append(list(sample_ids))
+        rows = [{"molecularProfileId": profile_id, "hugoGeneSymbol": g, "entrezGeneId": e, "sampleId": s,
+                 "patientId": "P", "studyId": "x", "value": str(10 * e + int(s[1:]))}
+                for s in sample_ids for g, e in genes if not (g == "G3" and s == "S05")]
+        return pd.DataFrame(rows)
+
+    monkeypatch.setattr(extractor, "fetch_profile_data", fake_fetch)
+    one = extractor.fetch_profile_wide("u", {}, "p", samples, chunk=100)
+    many = extractor.fetch_profile_wide("u", {}, "p", samples, chunk=3)
+    assert [len(c) for c in calls] == [7, 3, 3, 1]
+    assert list(many.columns) == ["hugoGeneSymbol", "entrezGeneId", *samples]
+    pd.testing.assert_frame_equal(one, many)
+    assert np.isnan(many.set_index("hugoGeneSymbol").loc["G3", "S05"])
+
+
+def test_profile_fetch_retries_a_timeout(extractor, monkeypatch):
+    import requests
+    tries = []
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return [{"molecularProfileId": "p", "gene": {"hugoGeneSymbol": "G1"}, "entrezGeneId": 1,
+                     "sampleId": "S1", "patientId": "P", "studyId": "x", "value": "1.5"}]
+
+    def post(*a, **k):
+        tries.append(1)
+        if len(tries) == 1:
+            raise requests.Timeout("read timed out")
+        return _Resp()
+
+    monkeypatch.setattr(extractor.requests, "post", post)
+    monkeypatch.setattr(extractor.time, "sleep", lambda s: None)
+    df = extractor.fetch_profile_data("u", {}, "p", ["S1"])
+    assert len(tries) == 2 and df.loc[0, "value"] == "1.5"
