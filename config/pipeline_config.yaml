@@ -76,6 +76,9 @@ cBio_studyId:
 pedcBio_studyId:
 #  "Wilms Tumor": null
   "Glioma": "pbta_all"
+modeling_studyId:
+  "Wilms Tumor": "wt_target_2018_pub"
+  "Glioma": "pbta_all"
 
 # What expression profiles to pull for each type
 # valid keys: mrna, mirna, methylation, linear_cna
@@ -90,6 +93,11 @@ processor:
       source: samples
       column: HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR
       map: "FHWT=0,DAWT=1"
+      class_names: {0: FHWT, 1: DAWT}
+      omics_files:
+        mrna: wt_target_2018_pub_mrna.tsv            # microarray, as in the manuscript
+        mirna: wt_target_2018_pub_mirna.tsv
+        methylation: wt_target_2018_pub_methylation_hm450.tsv
       # one value per modality, in the order of expression_profiles: mrna, mirna, methylation
       # (values used for the manuscript: Table 3)
       var_threshold: [0.1, 0.05, 0.01]
@@ -101,7 +109,14 @@ processor:
     Glioma:
       source: samples
       column: CANCER_TYPE
-      map: "low-grade=0,high-grade=1"
+      map:
+        "Low-grade glioma/astrocytoma (WHO grade I/II)": 0
+        "High-grade glioma/astrocytoma (WHO grade III/IV)": 1
+      drop_unmapped: true
+      class_names: {0: Low-grade, 1: High-grade}
+      omics_files:
+        mrna: pbta_all_rna_seq_v2_mrna.tsv
+        # linear_cna: <CNA file from step 2>
       # mrna, linear_cna
       var_threshold: [0.1, 0.01]
       alpha: [0.05, 0.10]
@@ -137,7 +152,11 @@ model_mogonet:
 post_analysis:
   survival:
     enabled: true
-    group_col: HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR   # column in clinical_patients.csv
+    group_col:
+      "Wilms Tumor": HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR
+      "Glioma": label
+    subset: {"Glioma": test}
+    title: {"Wilms Tumor": "OS by histology", "Glioma": "OS by grade group"}
     time_col: OS_MONTHS
     status_col: OS_STATUS
     title: "Overall Survival by Histology"
