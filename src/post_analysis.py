@@ -602,128 +602,228 @@ def _baseline_probs(
     return prob, te_idx, X_tr_aln, X_te_aln, params
 
 
+OMICS_VIEWS = ("mrna", "mirna", "methylation", "linear_cna")
+
+
+def _class_index(y, classes: np.ndarray) -> np.ndarray:
+    """Labels -> column index of the model output (train_with_split sorts the classes)."""
+    return np.searchsorted(classes, np.asarray(y))
+
+
+def _trte_view(Xtr: np.ndarray, Xte: np.ndarray, params, graph: bool):
+    """Train+test block of one view as the model sees it: stacked features and, for a graph view,
+    the train-test adjacency with the radius of the training patients."""
+    if not graph:
+        return np.vstack([Xtr, Xte]), None
+    rad = compute_adaptive_radius_parameter_mogonet(Xtr, params)
+    return np.vstack([Xtr, Xte]), build_trte_block_adjacency_mogonet(Xtr, Xte, radius=rad, params=params)
+
+
+def _ablate_view(model_dict, views: Sequence[str], m: str, base_X: Dict[str, np.ndarray],
+                 base_A: Dict[str, object], Xt: np.ndarray, Xe: np.ndarray, te_idx: Sequence[int],
+                 params, y_idx: np.ndarray, base_prob: np.ndarray, label: str = ""):
+    """Zero each feature of view m (training and test patients), rebuild that view's graph and
+    predict the test patients with the trained model. Returns, per feature, the drop of the
+    predicted probability of the true class for every test patient (features x patients) and the
+    drop in macro F1."""
+    rows = np.arange(len(y_idx))
+    base_p = base_prob[rows, y_idx]
+    base_f1 = f1_score(y_idx, base_prob.argmax(1), average="macro")
+    V = Xt.shape[1]
+    dprob = np.zeros((V, len(y_idx)), dtype=np.float64)
+    df1 = np.zeros(V, dtype=np.float64)
+    for j in range(V):
+        Xtr_v, Xte_v = Xt.copy(), Xe.copy()
+        Xtr_v[:, j] = 0.0
+        Xte_v[:, j] = 0.0
+        X_v, A_v = _trte_view(Xtr_v, Xte_v, params, graph=True)
+        X_all = [X_v if mm == m else base_X[mm] for mm in views]
+        A_all = [A_v if mm == m else base_A[mm] for mm in views]
+        data_trte, adj_trte = tensors_from_numpy_lists(X_all, A_all, device="cpu")
+        prob = test_epoch(data_trte, adj_trte, te_idx, model_dict)
+        dprob[j] = base_p - prob[rows, y_idx]
+        df1[j] = base_f1 - f1_score(y_idx, prob.argmax(1), average="macro")
+        if (j + 1) % 250 == 0 and j + 1 < V:
+            print(f"[post] {label}{m}: {j + 1}/{V} features")
+    return dprob, df1
+
+
+def _write_importance(path: Path, features: Sequence[str], cols: Dict[str, np.ndarray], score: str) -> pd.DataFrame:
+    """One row per feature, highest score first (ties by feature name, so the order is stable)."""
+    out = pd.DataFrame({"feature": [str(f) for f in features], **cols})
+    key = "delta_prob" if score == "prob" else "delta_f1"
+    out = out.sort_values([key, "feature"], ascending=[False, True], kind="mergesort")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(path, index=False)
+    return out
+
+
+def _report(out: pd.DataFrame, label: str, path: Path) -> None:
+    n = len(out)
+    pos, zero = int((out.delta_prob > 0).sum()), int((out.delta_prob == 0).sum())
+    top = ", ".join(f"{r.feature} ({r.delta_prob:.2e})" for r in out.head(3).itertuples())
+    print(f"[post] {label}: {n} features, delta_prob > 0 for {pos}, = 0 for {zero}; top: {top} -> {path}")
+
+
+def _importance_test_split(cfg: dict, ct: str, ab: dict, score: str, out_root: Path) -> None:
+    """Ablation on the held-out test split with the model trained by graph_ai_model."""
+    ct_slug = _slug(ct)
+    edges_per_node = int(ab.get("edges_per_node", 5))
+    # load trained model bundle + metadata, saved by graph_ai_model() under
+    # <model_mogonet.checkpoints_dir>/<portal>/<ct_slug>/<study_id>/ (older runs: <checkpoints_dir>/<ct>/)
+    portal, study_id = _study_for_ct(cfg, ct)
+    ckpt_root = Path((cfg.get("model_mogonet") or cfg.get("model") or {}).get("checkpoints_dir", "data/models"))
+    candidates = [ckpt_root / portal / ct_slug / study_id, ckpt_root / ct_slug, ckpt_root / str(ct).replace(" ", "_")]
+    ckpt_dir = next((c for c in candidates if (c / "meta.json").exists()), None)
+    if ckpt_dir is None:
+        print(f"[post] {ct}: checkpoints not found at {candidates[0]}; skipping selection.")
+        return
+    model_dict, meta = load_model_bundle(ckpt_dir)
+
+    # ---- USE TRAINED VIEW ORDER STRICTLY ----
+    trained_views = list(meta.get("views") or [])
+    if not trained_views:
+        raise RuntimeError("Checkpoint meta.json missing 'views'. Retrain to save 'views' in meta.")
+    mods_to_load = trained_views
+    print(f"[post] {ct}: portal={portal} study_id={study_id} trained_views={mods_to_load}")
+
+    try:
+        clin_cfg = ((cfg.get("model_mogonet") or {}).get("clinical_view") or {})
+        X_tr, X_te, y_tr, y_te, filt_root = _load_proc_for_study(portal, ct, study_id, mods_to_load, clin_cfg)
+    except FileNotFoundError as e:
+        print(str(e))
+        return
+    classes = np.unique(np.concatenate([_coerce_int_labels(y_tr.values), _coerce_int_labels(y_te.values)]))
+    y_idx = _class_index(_coerce_int_labels(y_te.values), classes)
+    X_tr, X_te = _reorder_to_trained_order(X_tr, X_te, mods_to_load)
+
+    base_prob, te_idx, X_tr_aln, X_te_aln, params = _baseline_probs(
+        model_dict, mods_to_load, X_tr, X_te, edges_per_node, meta
+    )
+    base_pred = base_prob.argmax(1)
+    base_auc = None
+    if base_prob.shape[1] == 2:
+        try:
+            base_auc = roc_auc_score(y_idx, base_prob[:, 1])
+        except Exception:
+            pass
+    print(f"[post] {ct}: baseline acc={accuracy_score(y_idx, base_pred):.4f}, "
+          f"f1={f1_score(y_idx, base_pred, average='macro'):.4f}"
+          + ("" if base_auc is None else f", auc={base_auc:.4f}") + f" on {len(y_idx)} test patients")
+
+    graph_views = _graph_views(meta, mods_to_load)
+    base_X, base_A = {}, {}
+    for m in mods_to_load:
+        base_X[m], base_A[m] = _trte_view(X_tr_aln[m].to_numpy(np.float32), X_te_aln[m].to_numpy(np.float32),
+                                          params, graph=m in graph_views)
+
+    out_dir = out_root / portal / ct_slug / study_id
+    for m in mods_to_load:
+        if m not in OMICS_VIEWS:
+            print(f"[post] {portal}/{ct}/{study_id}/{m}: skip importance (non-omics).")
+            continue
+        Xt, Xe = X_tr_aln[m].to_numpy(np.float32), X_te_aln[m].to_numpy(np.float32)
+        dprob, df1 = _ablate_view(model_dict, mods_to_load, m, base_X, base_A, Xt, Xe, te_idx, params,
+                                  y_idx, base_prob, label=f"{ct}/")
+        path = out_dir / f"{m}_selection.csv"
+        out = _write_importance(path, X_tr_aln[m].columns, {"delta_prob": dprob.mean(axis=1),
+                                                            "delta_f1": df1 * Xt.shape[1]}, score)
+        _report(out, f"{ct}/{m} (test split)", path)
+
+
+def _importance_cv(cfg: dict, ct: str, ab: dict, score: str, out_root: Path) -> None:
+    """Retrain MOGONET on each benchmark fold (data_process features, all modeled patients) and
+    average the ablation over the test folds, so every patient is scored once."""
+    from sklearn.model_selection import StratifiedKFold
+    from . import benchmark as bm
+    from . import graph_ai as gai
+
+    b, hp = bm._bench_cfg(cfg), bm._mogonet_cfg(cfg)
+    hp["edges_per_node"] = int(ab.get("edges_per_node", hp["edges_per_node"]))
+    clin_cfg = (cfg.get("model_mogonet", {}) or {}).get("clinical_view") or {}
+    clinical_features = (list(clin_cfg.get("features", ["AGE", "CLINICAL_STAGE", "RACE"]))
+                         if clin_cfg.get("enabled", False) else None)
+    mods = [m for m in gai._normalize_modalities((cfg.get("expression_profiles") or {}).get(ct, []))
+            if m in OMICS_VIEWS]
+    portal, study_id = _study_for_ct(cfg, ct)
+    try:
+        X, y, clin = bm.load_cohort(cfg, ct, portal, study_id, mods, "precomputed")
+    except FileNotFoundError as e:
+        print(f"[post] {ct}: {e}")
+        return
+    classes = np.unique(y.to_numpy())
+    params = MOGONETGraphParams(edges_per_node=hp["edges_per_node"])
+    skf = StratifiedKFold(n_splits=b["n_splits"], shuffle=True, random_state=b["seed"])
+    print(f"[post] {ct}: importance over {b['n_splits']} CV folds (seed {b['seed']}), {len(y)} patients, views {mods}")
+
+    sums = {m: np.zeros(X[m].shape[1]) for m in mods}
+    fold_means = {m: [] for m in mods}
+    fold_f1 = {m: [] for m in mods}
+    for k, (i_tr, i_te) in enumerate(skf.split(np.zeros(len(y)), y.to_numpy()), start=1):
+        tr, te = y.index[i_tr], y.index[i_te]
+        Xtr, Xte = bm.fold_views(X, y, clin, tr, te, mods, "precomputed", bm._label_cfg(cfg, ct), clinical_features)
+        views = list(Xtr)
+        metrics, model_dict = gai.train_with_split(views, dict(Xtr), dict(Xte), y.loc[tr], y.loc[te],
+                                                   save_dir=None, seed=b["seed"], **hp)
+        graph_views = gai.graph_view_names(views, hp["clinical_graph"])
+        base_X, base_A = {}, {}
+        for v in views:
+            base_X[v], base_A[v] = _trte_view(Xtr[v].to_numpy(np.float32), Xte[v].to_numpy(np.float32),
+                                              params, graph=v in graph_views)
+        te_idx = list(range(len(tr), len(tr) + len(te)))
+        data_trte, adj_trte = tensors_from_numpy_lists([base_X[v] for v in views], [base_A[v] for v in views],
+                                                       device="cpu")
+        base_prob = test_epoch(data_trte, adj_trte, te_idx, model_dict)
+        y_idx = _class_index(y.loc[te].to_numpy(), classes)
+        print(f"[post] {ct} fold {k}/{b['n_splits']}: acc={metrics.get('acc', float('nan')):.3f} "
+              f"f1={metrics.get('f1', float('nan')):.3f} on {len(te)} test patients")
+        for m in mods:
+            dprob, df1 = _ablate_view(model_dict, views, m, base_X, base_A, Xtr[m].to_numpy(np.float32),
+                                      Xte[m].to_numpy(np.float32), te_idx, params, y_idx, base_prob,
+                                      label=f"{ct} fold {k}/")
+            sums[m] += dprob.sum(axis=1)
+            fold_means[m].append(dprob.mean(axis=1))
+            fold_f1[m].append(df1 * X[m].shape[1])
+
+    out_dir = out_root / portal / _slug(ct) / study_id
+    for m in mods:
+        per_fold = np.vstack(fold_means[m])
+        path = out_dir / f"{m}_selection_cv.csv"
+        out = _write_importance(path, X[m].columns, {
+            "delta_prob": sums[m] / len(y),                      # mean over all patients (each in one test fold)
+            "delta_prob_sd": per_fold.std(axis=0, ddof=1),       # SD of the fold means
+            "folds_positive": (per_fold > 0).sum(axis=0),
+            "delta_f1": np.vstack(fold_f1[m]).mean(axis=0),      # MOGONET score, mean over folds
+        }, score)
+        _report(out, f"{ct}/{m} ({b['n_splits']}-fold CV)", path)
+
+
 def run_feature_selection():
+    """
+    Ablation importance per omics feature (post_analysis.feature_selection):
+      score        prob (default): mean drop of the predicted probability of the true class when
+                   the feature is zeroed; f1: drop in macro F1 x number of features in the view,
+                   as in MOGONET (a feature scores 0 unless a test prediction flips). Both are
+                   written; score sets the ranking.
+      evaluate_on  test (default): the model trained by graph_ai_model, on its held-out test
+                   split -> <mod>_selection.csv; cv: MOGONET retrained on each benchmark fold
+                   (benchmark.n_splits / seed, data_process features) -> <mod>_selection_cv.csv.
+    """
     cfg = _cfg()
     ab = (cfg.get("post_analysis") or {}).get("feature_selection") or {}
     if not ab or not ab.get("enabled", False):
         print("[post] Feature selection disabled or not configured.")
         return
-
-    edges_per_node = int(ab.get("edges_per_node", 5))
+    score = str(ab.get("score", "prob")).lower()
+    evaluate_on = str(ab.get("evaluate_on", "test")).lower()
+    if score not in ("prob", "f1") or evaluate_on not in ("test", "cv"):
+        raise ValueError("post_analysis.feature_selection: score must be prob or f1, evaluate_on test or cv")
     out_root = Path(ab.get("out_dir", "data/analysis/feature_selection"))
-
-    cts = cfg.get("cancer_type_interest", [])
-    for ct in cts:
-        ct_slug = _slug(ct)
-
-        # load trained model bundle + metadata, saved by graph_ai_model() under
-        # <model_mogonet.checkpoints_dir>/<portal>/<ct_slug>/<study_id>/ (older runs: <checkpoints_dir>/<ct>/)
-        portal, study_id = _study_for_ct(cfg, ct)
-        ckpt_root = Path((cfg.get("model_mogonet") or cfg.get("model") or {}).get("checkpoints_dir", "data/models"))
-        candidates = [ckpt_root / portal / ct_slug / study_id, ckpt_root / ct_slug, ckpt_root / str(ct).replace(" ", "_")]
-        ckpt_dir = next((c for c in candidates if (c / "meta.json").exists()), None)
-        if ckpt_dir is None:
-            print(f"[post] {ct}: checkpoints not found at {candidates[0]}; skipping selection.")
-            continue
-        model_dict, meta = load_model_bundle(ckpt_dir)
-
-        # ---- USE TRAINED VIEW ORDER STRICTLY ----
-        trained_views = list(meta.get("views") or [])
-        if not trained_views:
-            raise RuntimeError("Checkpoint meta.json missing 'views'. Retrain to save 'views' in meta.")
-        mods_to_load = trained_views
-
-        print(f"[post] {ct}: portal={portal} study_id={study_id} trained_views={mods_to_load}")
-
-        # load processed data + labels using the trained view set
-        try:
-            clin_cfg = ((cfg.get("model_mogonet") or {}).get("clinical_view") or {})
-            X_tr, X_te, y_tr, y_te, filt_root = _load_proc_for_study(portal, ct, study_id, mods_to_load, clin_cfg)
-        except FileNotFoundError as e:
-            print(str(e))
-            continue
-
-        y_true = _coerce_int_labels(y_te.values)
-
-        # ---- REORDER CURRENT FRAMES EXACTLY AS TRAINED (keys/iteration order) ----
-        X_tr, X_te = _reorder_to_trained_order(X_tr, X_te, mods_to_load)
-
-        print("[post] Trained order:", mods_to_load)
-        # baseline (all trained views) — ensures VCDN dims match
-        base_prob, te_idx, X_tr_aln, X_te_aln, params = _baseline_probs(
-            model_dict, mods_to_load, X_tr, X_te, edges_per_node, meta
-        )
-        base_pred = base_prob.argmax(1)
-        base_f1  = f1_score(y_true, base_pred, average="macro")
-        base_acc = accuracy_score(y_true, base_pred)
-        base_auc = None
-        if base_prob.shape[1] == 2:
-            try:
-                base_auc = roc_auc_score(y_true, base_prob[:, 1])
-            except Exception:
-                pass
-        print(f"[post] {ct}: baseline acc={base_acc:.4f}, f1={base_f1:.4f}{'' if base_auc is None else f', auc={base_auc:.4f}'}")
-
-        # ----- PRECOMPUTE TRTE BLOCKS FOR ALL TRAINED VIEWS (baseline, non-ablated) -----
-        base_X_trte = {}
-        base_A_trte = {}
-        graph_views = _graph_views(meta, mods_to_load)
-        for m in mods_to_load:
-            Xtr = X_tr_aln[m].to_numpy(dtype=np.float32)
-            Xte = X_te_aln[m].to_numpy(dtype=np.float32)
-            base_X_trte[m] = np.vstack([Xtr, Xte])
-            if m not in graph_views:
-                base_A_trte[m] = None
-                continue
-            rad = compute_adaptive_radius_parameter_mogonet(Xtr, params)
-            base_A_trte[m] = build_trte_block_adjacency_mogonet(Xtr, Xte, radius=rad, params=params)
-
-        # ----- per-modality ablation (KEEP TRAINED ORDER); omics only -----
-        OMICS = {"mrna", "mirna", "methylation", "linear_cna"}
-        out_dir = out_root / portal / ct_slug / study_id
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        for m in mods_to_load:
-            if m not in OMICS:
-                print(f"[post] {portal}/{ct}/{study_id}/{m}: skip importance (non-omics).")
-                continue
-
-            # aligned matrices
-            Xt = X_tr_aln[m].to_numpy(dtype=np.float32)
-            Xe = X_te_aln[m].to_numpy(dtype=np.float32)
-            V = Xt.shape[1]
-            imps = np.zeros(V, dtype=float)
-
-            for j in range(V):
-                # ablate one feature
-                Xtr_v = Xt.copy(); Xte_v = Xe.copy()
-                Xtr_v[:, j] = 0.0; Xte_v[:, j] = 0.0
-                rad_v = compute_adaptive_radius_parameter_mogonet(Xtr_v, params)
-                A_trte_v = build_trte_block_adjacency_mogonet(Xtr_v, Xte_v, radius=rad_v, params=params)
-                X_trte_v = np.vstack([Xtr_v, Xte_v])
-
-                # assemble TRTE lists STRICTLY in trained order
-                X_trte_all = []
-                A_trte_all = []
-                for mm in mods_to_load:
-                    if mm == m:
-                        X_trte_all.append(X_trte_v)
-                        A_trte_all.append(A_trte_v)
-                    else:
-                        X_trte_all.append(base_X_trte[mm])
-                        A_trte_all.append(base_A_trte[mm])
-
-                data_trte, adj_trte = tensors_from_numpy_lists(X_trte_all, A_trte_all, device="cpu")
-                prob = test_epoch(data_trte, adj_trte, te_idx, model_dict)
-
-                f1 = f1_score(y_true, prob.argmax(1), average="macro")
-                imps[j] = float((base_f1 - f1) * V)
-
-            out_df = pd.DataFrame({"feature": X_tr_aln[m].columns.astype(str), "delta_f1": imps})
-            out_df.sort_values("delta_f1", ascending=False, inplace=True)
-            out_path = out_dir / f"{m}_selection.csv"
-            out_df.to_csv(out_path, index=False)
-            print(f"[post] {ct}/{m}: wrote importance CSV -> {out_path}")
+    for ct in cfg.get("cancer_type_interest", []):
+        if evaluate_on == "cv":
+            _importance_cv(cfg, ct, ab, score, out_root)
+        else:
+            _importance_test_split(cfg, ct, ab, score, out_root)
 
 
 # =============================================================================

@@ -389,6 +389,31 @@ post_analysis:
 It writes `data/analysis/km/<portal>/<type>/<study_id>/km.png` and `km_stats.tsv` (patients, events
 and median survival per group, log-rank p-value).
 
+### Feature importance (`post_analysis.feature_selection`)
+
+`post_analysis` zeroes one omics feature at a time (training and test patients), rebuilds that
+view's patient-similarity graph and predicts the test patients again with the trained model:
+
+```yaml
+post_analysis:
+  feature_selection:
+    enabled: true
+    edges_per_node: 5
+    score: prob          # prob (default): mean drop of the predicted probability of the true class
+                         # f1: drop in macro F1 x number of features in the view, as in MOGONET
+    evaluate_on: test    # test (default): the graph_ai_model model on its held-out test split
+                         # cv: MOGONET retrained on each benchmark fold, every patient scored once
+    out_dir: data/analysis/feature_selection
+```
+
+Both scores are written; `score` sets the ranking. With `f1`, a feature scores 0 unless a test
+prediction changes class, so on a small test split most features tie at 0. `prob` gives a value for
+almost every feature (positive: the model is less sure of the right class without it).
+`evaluate_on: cv` uses the `data_process` features of all modeled patients and the folds and seed
+of `benchmark` (n_splits models are trained), and adds the SD of the fold means and the number of
+folds in which the score is positive. Outputs: `data/analysis/feature_selection/<portal>/<type>/<study_id>/<mod>_selection.csv`
+(test) or `<mod>_selection_cv.csv` (cv).
+
 ## Docker Compose
 
 Docker Compose provides the most reproducible way to build and run GAIPO.
