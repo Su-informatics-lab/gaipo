@@ -150,7 +150,7 @@ model_mogonet:
     # false: clinical features -> own classifier -> VCDN fusion (no graph)
     # true:  patient-similarity graph + GCN encoder, as for the omics views (graph_construct
     #        also writes clinical_*.adj.npz / .graphml)
-    graph: false
+    graph: true
 
 # 12) post_analysis.py
 post_analysis:
