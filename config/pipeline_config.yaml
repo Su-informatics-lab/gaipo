@@ -172,6 +172,15 @@ post_analysis:
 
   evaluate_on: cv
 
+  # Ward clustering of the trained model's latent features (GCN embeddings); with two clusters,
+  # lower median OS months = High-risk; KM curves of the clusters
+  clustering:
+    enabled: false
+    subset: test                  # test, train or all
+    n_clusters: 2
+    title: "OS by Hierarchical Clusters"
+    out_dir: data/analysis/clusters
+
 # 13) benchmark.py: stratified k-fold cross-validation with one seed (run on demand:
 #     python -m src.main --call benchmark). MOGONET uses the model_mogonet settings above.
 benchmark:

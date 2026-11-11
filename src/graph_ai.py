@@ -301,6 +301,20 @@ def train_epoch(data_list: List[torch.Tensor], adj_list, label: torch.Tensor, sa
         loss_dict["C"] = float(c_loss.detach().cpu().numpy())
     return loss_dict
 
+def encode(data_list: List[torch.Tensor], adj_list, model_dict) -> List[np.ndarray]:
+    """Output of each view's encoder (GCN embedding, or the input itself for a view without a
+    graph) for every node, in eval mode: the patients' latent features."""
+    for m in model_dict:
+        model_dict[m].eval()
+    out = []
+    with torch.no_grad():
+        for i in range(len(data_list)):
+            enc = model_dict[f"E{i+1}"]
+            z = enc(data_list[i], None) if isinstance(enc, Identity_E) else enc(data_list[i], adj_list[i])
+            out.append(z.data.cpu().numpy())
+    return out
+
+
 def test_epoch(data_list: List[torch.Tensor], adj_list, te_idx: Sequence[int], model_dict):
     for m in model_dict:
         model_dict[m].eval()

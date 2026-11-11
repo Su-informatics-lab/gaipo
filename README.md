@@ -382,12 +382,55 @@ post_analysis:
     subset: {"Glioma": test}         # all (default), train or test
     time_col: OS_MONTHS
     status_col: OS_STATUS
-    title: {"Wilms Tumor": "OS by histology", "Glioma": "OS by grade group"}
+    title: {"Wilms Tumor": "OS by histology", "Glioma": "OS by Grade Group"}
+    style: publication               # default, or publication: figure-panel layout (below)
+    legend: below                    # publication: below (default) or inside
+    xlim: [0, 300]                   # optional x-axis range, the same for every KM figure
     out_dir: data/analysis/km
 ```
 
 It writes `data/analysis/km/<portal>/<type>/<study_id>/km.png` and `km_stats.tsv` (patients, events
-and median survival per group, log-rank p-value).
+and median survival per group, log-rank p-value). With `style: publication` the figure follows the
+PCGS layout: the `title` text (plus the subset, e.g. "OS by Grade Group (test set)", without the
+cancer type and study) and "log-rank p-value = …" above the axes, 22-pt titles, labels and ticks,
+a 20-pt legend, and a 600-dpi PNG plus a PDF. Every figure has the same canvas and the same axes
+box, with the titles and legend centered on the axes, so KM figures placed side by side (for
+example the grade-group and cluster curves) line up. `legend: below` puts the legend under the
+x-axis label, where it never covers a curve; `legend: inside` puts it inside the axes at the first
+spot clear of every curve and confidence band, or below when there is none. Set `xlim` to give
+the figures the same time axis.
+
+### Hierarchical clustering (`post_analysis.clustering`)
+
+`post_analysis` can also group the patients without their labels: each patient's latent features
+are the outputs of the trained model's GCN encoders (last layer, one block per omics view,
+concatenated). Training patients are embedded through the training graph, test patients through
+the train–test graph, as when the model predicts them. Ward hierarchical clustering (Euclidean
+distance) cuts them into `n_clusters` groups. With two clusters, the cluster whose patients have
+the lower median `time_col` is "High-risk" and the other "Low-risk"; KM curves and the log-rank
+test compare the groups (patients with survival data):
+
+```yaml
+post_analysis:
+  clustering:
+    enabled: true
+    subset: test                     # test (default), train or all
+    n_clusters: 2
+    include_clinical: false          # true: also the clinical view
+    standardize: false               # true: z-score each latent dimension first
+    cancer_types: ["Glioma"]         # default: every type with a trained model
+    time_col: OS_MONTHS
+    status_col: OS_STATUS
+    title: "OS by Hierarchical Clusters"
+    style: publication               # style, legend, xlim: default as post_analysis.survival
+    out_dir: data/analysis/clusters
+```
+
+Outputs in `data/analysis/clusters/<portal>/<type>/<study_id>/`: `clusters.tsv` (patient, split,
+modeled class, cluster, risk group, survival time and status), `cluster_vs_class.tsv` (risk group by
+modeled class), `km_clusters.png` (and `.pdf` with `style: publication`) and `km_clusters_stats.tsv`.
+The same steps on any latent matrix are available as
+`post_analysis.hierarchical_clustering_analysis(latent, clinical_df, ...)`.
 
 ### Feature importance (`post_analysis.feature_selection`)
 
