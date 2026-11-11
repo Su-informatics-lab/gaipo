@@ -160,10 +160,10 @@ post_analysis:
       "Wilms Tumor": HISTOLOGY_CLASSIFICATION_IN_PRIMARY_TUMOR
       "Glioma": label
     subset: {"Glioma": test}
-    title: {"Wilms Tumor": "OS by histology", "Glioma": "OS by grade group"}
-    time_col: OS_MONTHS
-    status_col: OS_STATUS
-    out_dir: data/analysis/km
+    title: {"Wilms Tumor": "OS by histology", "Glioma": "OS by Grade Group"}
+    style: publication
+    legend: below
+    xlim: [0, 300]
 
   feature_selection:
     enabled: true
@@ -175,7 +175,8 @@ post_analysis:
   # Ward clustering of the trained model's latent features (GCN embeddings); with two clusters,
   # lower median OS months = High-risk; KM curves of the clusters
   clustering:
-    enabled: false
+    enabled: True
+    cancer_types: ["Glioma"]
     subset: test                  # test, train or all
     n_clusters: 2
     title: "OS by Hierarchical Clusters"

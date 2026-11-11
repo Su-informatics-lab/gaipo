@@ -187,8 +187,8 @@ def _p_text(p: float) -> str:
 # and the same axes box (inches), so KM figures placed side by side line up.
 PUBLICATION = {"width": 7.0, "left": 1.35, "right": 0.35, "top": 1.15, "axes_height": 4.6,
                "bottom": 1.25, "legend_row": 0.5,
-               "title": 22, "subtitle": 22, "label": 22, "ticks": 22, "legend": 20,
-               "linewidth": 1.5, "dpi": 600, "font": "DejaVu Sans"}
+               "title": 28, "subtitle": 24, "label": 24, "ticks": 24, "legend": 24,
+               "linewidth": 1.5, "dpi": 600, "font": "Arial"}
 # legend positions tried inside the axes with legend: inside (first clear of every curve and band)
 _LEGEND_SPOTS = ["upper right", "lower right", "lower left", "upper left", "center right", "lower center",
                  "upper center", "center left", "center"]
@@ -229,7 +229,8 @@ def _legend_inside(fig, ax, handles, labels, fontsize) -> bool:
     renderer = fig.canvas.get_renderer()
     obstacles = _curve_paths(ax)
     for loc in _LEGEND_SPOTS:
-        leg = ax.legend(handles, labels, loc=loc, fontsize=fontsize, frameon=True, framealpha=0.6)
+        leg = ax.legend(handles, labels, loc=loc, fontsize=fontsize, frameon=True, framealpha=0.6,
+                        handlelength=1.5, handletextpad=0.5, columnspacing=1.2)
         box = leg.get_window_extent(renderer).padded(4)
         if not any(path.intersects_bbox(box, filled=filled) for path, filled in obstacles):
             return True
@@ -289,8 +290,13 @@ def _km_figure_publication(fits, title: str, p: float, xlabel: Optional[str], fi
         if str(legend).lower() == "inside" and _legend_inside(fig, ax, handles, labels, st["legend"]):
             where = "inside"
         if where == "below" and handles:
-            fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(cx, 0.1 / H), ncol=ncol,
-                       fontsize=st["legend"], frameon=True, framealpha=0.6)
+            leg = fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(cx, 0.1 / H), ncol=ncol,
+                             fontsize=st["legend"], frameon=True, framealpha=0.6,
+                             handlelength=1.5, handletextpad=0.5, columnspacing=1.2)
+            fig.canvas.draw()
+            w = leg.get_window_extent(fig.canvas.get_renderer()).width / fig.bbox.width   # figure fraction
+            x = min(max(cx, w / 2 + 0.01), 1 - w / 2 - 0.01)       # keep the whole frame on the canvas
+            leg.set_bbox_to_anchor((x, 0.1 / H))
         Path(filename).parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(filename, dpi=st["dpi"])               # no bbox_inches="tight": same canvas every time
         fig.savefig(str(Path(filename).with_suffix(".pdf")))
