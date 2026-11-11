@@ -170,6 +170,8 @@ post_analysis:
     edges_per_node: 5
     out_dir: data/analysis/feature_selection
 
+  evaluate_on: cv
+
 # 13) benchmark.py: stratified k-fold cross-validation with one seed (run on demand:
 #     python -m src.main --call benchmark). MOGONET uses the model_mogonet settings above.
 benchmark:
